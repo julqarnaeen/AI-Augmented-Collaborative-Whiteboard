@@ -237,8 +237,11 @@ public class ClientHandler extends Thread {
             case "DRAW_LINE":
             case "DRAW_RECT":
             case "DRAW_CIRCLE":
+            case "DRAW_TRI":
             case "DRAW_END":
             case "TEXT":
+            case "MOVE_TEXT":
+            case "BLOCK_SLANG":
             case "CLEAR_CANVAS":
             case "COLOR":
             case "STROKE_WIDTH":
