@@ -3,30 +3,13 @@ package network;
 import java.util.List;
 import network.WhiteboardPanel.DrawPoint;
 
-/**
- * ShapeNormalizer.java
- * =====================
- *
- * This class implements the AI-Powered Shape Normalization & Resizing feature
- * from the project proposal.
- *
- * It uses geometric heuristics (lightweight, deterministic rule-based ML/AI)
- * to analyze the sequence of points in a freehand drawing stroke and classify it as
- * a Line, Circle, or Rectangle. If recognized, it returns a normalized vector geometry.
- */
 public class ShapeNormalizer {
 
-    /**
-     * Represents the output of the shape recognition and normalization process.
-     */
     public static class NormalizedShape {
         public enum Type { FREEHAND, LINE, RECTANGLE, CIRCLE, TRIANGLE }
 
         public final Type type;
-        
-        // Coordinates:
-        // - LINE: (x1, y1) is start, (x2, y2) is end
-        // - RECTANGLE, CIRCLE, TRIANGLE: (x1, y1) is top-left, x2 is width, y2 is height
+
         public final int x1, y1, x2, y2;
 
         public NormalizedShape(Type type, int x1, int y1, int x2, int y2) {
@@ -38,12 +21,6 @@ public class ShapeNormalizer {
         }
     }
 
-    /**
-     * Analyzes a list of points and recognizes whether they form a Line, Circle, or Rectangle.
-     *
-     * @param points List of coordinates in the raw drawing stroke
-     * @return A NormalizedShape indicating the shape classification and its smoothed vector coordinates.
-     */
     public static NormalizedShape normalize(List<DrawPoint> points) {
         if (points == null || points.size() < 5) {
             return new NormalizedShape(NormalizedShape.Type.FREEHAND, 0, 0, 0, 0);
@@ -53,20 +30,16 @@ public class ShapeNormalizer {
         DrawPoint start = points.get(0);
         DrawPoint end = points.get(N - 1);
 
-        // 1. Calculate path length and direct distance
         double pathLength = 0;
         for (int i = 0; i < N - 1; i++) {
             pathLength += distance(points.get(i), points.get(i + 1));
         }
         double directDistance = distance(start, end);
 
-        // 2. Check for Straight Line
-        // If the path length is very close to the direct distance between endpoints, it's a line.
         if (pathLength > 0 && (directDistance / pathLength) > 0.85) {
             return new NormalizedShape(NormalizedShape.Type.LINE, start.x, start.y, end.x, end.y);
         }
 
-        // 3. Find Bounding Box and Centroid
         int minX = Integer.MAX_VALUE;
         int maxX = Integer.MIN_VALUE;
         int minY = Integer.MAX_VALUE;
@@ -88,18 +61,15 @@ public class ShapeNormalizer {
         double cx = sumX / N;
         double cy = sumY / N;
 
-        // Ensure we don't normalize tiny accidental clicks
         if (W < 12 || H < 12) {
             return new NormalizedShape(NormalizedShape.Type.FREEHAND, 0, 0, 0, 0);
         }
 
-        // 4. Check for Closed shapes (Circle / Rectangle)
-        // A hand-drawn shape is considered closed if start and end are close or relative to the size.
         double startEndDist = distance(start, end);
         boolean isClosed = startEndDist < 60 || (pathLength > 0 && startEndDist / pathLength < 0.3);
 
         if (isClosed) {
-            // Check for Circle (calculate coefficient of variation of radii from centroid)
+
             double sumRadius = 0;
             for (DrawPoint p : points) {
                 sumRadius += distance(p.x, p.y, cx, cy);
@@ -114,7 +84,6 @@ public class ShapeNormalizer {
             double stdDev = Math.sqrt(varianceSum / N);
             double cv = (meanRadius > 0) ? (stdDev / meanRadius) : 1.0;
 
-            // If CV is small, the points are highly equidistant from centroid, indicating a circle.
             if (cv < 0.18) {
                 int radius = (int) meanRadius;
                 int x = (int) (cx - radius);
@@ -122,7 +91,6 @@ public class ShapeNormalizer {
                 return new NormalizedShape(NormalizedShape.Type.CIRCLE, x, y, radius * 2, radius * 2);
             }
 
-            // Check for Triangle (distance from path to top-left and top-right corners of bounding box is large)
             double minDistanceToTL = Double.MAX_VALUE;
             double minDistanceToTR = Double.MAX_VALUE;
             for (DrawPoint p : points) {
@@ -137,8 +105,6 @@ public class ShapeNormalizer {
                 return new NormalizedShape(NormalizedShape.Type.TRIANGLE, minX, minY, W, H);
             }
 
-            // Otherwise, it is classified as a Rectangle.
-            // Normalized rectangle is defined by its bounding box.
             return new NormalizedShape(NormalizedShape.Type.RECTANGLE, minX, minY, W, H);
         }
 
