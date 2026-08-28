@@ -2,8 +2,10 @@ package network;
 
 import java.awt.*;
 import java.awt.event.*;
+import java.io.File;
 import java.io.IOException;
 import javax.swing.*;
+import com.google.gson.Gson;
 
 public class WhiteboardClient {
 
@@ -11,7 +13,7 @@ public class WhiteboardClient {
 
     private static final int SERVER_PORT = 12345;
 
-    private Connection connection;
+    private ClientConnection connection;
 
     private JFrame frame;
 
@@ -23,14 +25,29 @@ public class WhiteboardClient {
 
     private String clientId;
 
+    public String getClientId() {
+        return clientId;
+    }
+
+    private final Gson gson;
+
+    private static String loggedInUser = "Guest";
+
+    private JButton connectBtn;
+    private JTextPane chatPane;
+    private javax.swing.text.html.HTMLDocument doc;
+    private javax.swing.text.html.HTMLEditorKit kit;
+    private JTextField chatInput;
+
     public WhiteboardClient() {
         this.running = false;
         this.clientId = "Not connected";
+        this.gson = new Gson();
     }
 
     private void createGUI() {
 
-        frame = new JFrame("AI-Augmented Collaborative Whiteboard");
+        frame = new JFrame("AI-Augmented Collaborative Whiteboard — " + loggedInUser);
 
         frame.setDefaultCloseOperation(JFrame.DO_NOTHING_ON_CLOSE);
 
@@ -52,10 +69,22 @@ public class WhiteboardClient {
 
         JScrollPane scrollPane = new JScrollPane(whiteboardPanel);
         scrollPane.getViewport().setBackground(Color.WHITE);
+        // Ensure scrollbars scroll comfortably
+        scrollPane.getHorizontalScrollBar().setUnitIncrement(16);
+        scrollPane.getVerticalScrollBar().setUnitIncrement(16);
 
         JPanel toolbar = createToolbar();
 
-        statusLabel = new JLabel("  Status: Not connected");
+        // Create Chat sidebar panel
+        JPanel chatPanel = createChatPanel();
+
+        // Split Layout: Left scrollable canvas, Right chat panel
+        JSplitPane splitPane = new JSplitPane(JSplitPane.HORIZONTAL_SPLIT, scrollPane, chatPanel);
+        splitPane.setDividerLocation(900);
+        splitPane.setResizeWeight(1.0);
+        splitPane.setBorder(null);
+
+        statusLabel = new JLabel("  Status: Not connected | User: " + loggedInUser);
         statusLabel.setFont(new Font("Segoe UI", Font.BOLD, 12));
         statusLabel.setForeground(new Color(148, 163, 184));
         statusLabel.setOpaque(true);
@@ -67,9 +96,11 @@ public class WhiteboardClient {
 
         frame.getContentPane().setLayout(new BorderLayout());
         frame.getContentPane().add(toolbar, BorderLayout.NORTH);
-        frame.getContentPane().add(scrollPane, BorderLayout.CENTER);
+        frame.getContentPane().add(splitPane, BorderLayout.CENTER);
         frame.getContentPane().add(statusLabel, BorderLayout.SOUTH);
 
+        // Limit client window initial size while keeping canvas scrollable
+        frame.setPreferredSize(new Dimension(1200, 800));
         frame.pack();
 
         frame.setLocationRelativeTo(null);
@@ -77,29 +108,38 @@ public class WhiteboardClient {
         frame.setVisible(true);
 
         System.out.println("[Client] GUI created and visible.");
+
+        // Auto-connect to server on GUI load
+        connectToServer();
     }
 
     private void styleButton(AbstractButton btn) {
         btn.setFont(new Font("Segoe UI", Font.BOLD, 12));
         btn.setForeground(Color.WHITE);
-        btn.setBackground(new Color(30, 41, 59));
         btn.setFocusPainted(false);
         btn.setBorderPainted(false);
         btn.setOpaque(true);
         btn.setCursor(new Cursor(Cursor.HAND_CURSOR));
         btn.setBorder(BorderFactory.createEmptyBorder(6, 12, 6, 12));
 
+        final Color originalBackground = btn.getBackground() != null ? btn.getBackground() : new Color(30, 41, 59);
+        final Color hoverBackground = new Color(
+            Math.min(255, originalBackground.getRed() + 20),
+            Math.min(255, originalBackground.getGreen() + 20),
+            Math.min(255, originalBackground.getBlue() + 20)
+        );
+
         btn.addMouseListener(new MouseAdapter() {
             @Override
             public void mouseEntered(MouseEvent e) {
                 if (!btn.isSelected()) {
-                    btn.setBackground(new Color(51, 65, 85));
+                    btn.setBackground(hoverBackground);
                 }
             }
             @Override
             public void mouseExited(MouseEvent e) {
                 if (!btn.isSelected()) {
-                    btn.setBackground(new Color(30, 41, 59));
+                    btn.setBackground(originalBackground);
                 }
             }
         });
@@ -108,24 +148,31 @@ public class WhiteboardClient {
             if (btn.isSelected()) {
                 btn.setBackground(new Color(59, 130, 246));
             } else {
-                btn.setBackground(new Color(30, 41, 59));
+                btn.setBackground(originalBackground);
             }
         });
     }
 
     private JPanel createToolbar() {
-        JPanel toolbar = new JPanel();
-        toolbar.setLayout(new FlowLayout(FlowLayout.LEFT, 10, 8));
-        toolbar.setBorder(BorderFactory.createCompoundBorder(
+        JPanel mainToolbar = new JPanel(new BorderLayout(15, 0));
+        mainToolbar.setBackground(new Color(15, 23, 42));
+        mainToolbar.setBorder(BorderFactory.createCompoundBorder(
             BorderFactory.createMatteBorder(0, 0, 1, 0, new Color(30, 41, 59)),
-            BorderFactory.createEmptyBorder(4, 8, 4, 8)
+            BorderFactory.createEmptyBorder(8, 12, 8, 12)
         ));
-        toolbar.setBackground(new Color(15, 23, 42));
+
+        // Group 1: Left Card (Drawing & Styling Tools)
+        JPanel cardLeft = new JPanel(new FlowLayout(FlowLayout.LEFT, 8, 4));
+        cardLeft.setBackground(new Color(24, 32, 51));
+        cardLeft.setBorder(BorderFactory.createCompoundBorder(
+            BorderFactory.createLineBorder(new Color(51, 65, 85), 1),
+            BorderFactory.createEmptyBorder(2, 6, 2, 6)
+        ));
 
         JLabel colorLabel = new JLabel("Color: ");
         colorLabel.setFont(new Font("Segoe UI", Font.BOLD, 12));
         colorLabel.setForeground(new Color(148, 163, 184));
-        toolbar.add(colorLabel);
+        cardLeft.add(colorLabel);
 
         Color[] colors = {Color.BLACK, Color.RED, Color.BLUE,
                           new Color(16, 185, 129), new Color(245, 158, 11)};
@@ -138,7 +185,7 @@ public class WhiteboardClient {
                     Graphics2D g2 = (Graphics2D) g.create();
                     g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
 
-                    g2.setColor(new Color(15, 23, 42));
+                    g2.setColor(new Color(24, 32, 51));
                     g2.fillRect(0, 0, getWidth(), getHeight());
 
                     g2.setColor(getBackground());
@@ -152,7 +199,7 @@ public class WhiteboardClient {
                     g2.dispose();
                 }
             };
-            colorBtn.setPreferredSize(new Dimension(26, 26));
+            colorBtn.setPreferredSize(new Dimension(24, 24));
             colorBtn.setBackground(colors[i]);
             colorBtn.setToolTipText(colorNames[i]);
             colorBtn.setOpaque(false);
@@ -164,21 +211,21 @@ public class WhiteboardClient {
             colorBtn.addActionListener(e -> {
                 whiteboardPanel.setDrawingColor(selectedColor);
                 updateStatus("Color changed to " + selectedColor);
-                toolbar.repaint();
+                cardLeft.repaint();
             });
-            toolbar.add(colorBtn);
+            cardLeft.add(colorBtn);
         }
 
-        toolbar.add(new JLabel("  |  "));
+        cardLeft.add(new JLabel(" | "));
 
         JLabel widthLabel = new JLabel("Width: ");
         widthLabel.setFont(new Font("Segoe UI", Font.BOLD, 12));
         widthLabel.setForeground(new Color(148, 163, 184));
-        toolbar.add(widthLabel);
+        cardLeft.add(widthLabel);
 
         SpinnerNumberModel widthModel = new SpinnerNumberModel(3, 1, 20, 1);
         JSpinner widthSpinner = new JSpinner(widthModel);
-        widthSpinner.setPreferredSize(new Dimension(50, 28));
+        widthSpinner.setPreferredSize(new Dimension(46, 26));
         widthSpinner.setBackground(Color.WHITE);
         widthSpinner.setForeground(new Color(15, 23, 42));
         widthSpinner.setBorder(BorderFactory.createLineBorder(new Color(51, 65, 85)));
@@ -192,15 +239,16 @@ public class WhiteboardClient {
             int width = (int) widthSpinner.getValue();
             whiteboardPanel.setStrokeWidth(width);
         });
-        toolbar.add(widthSpinner);
+        cardLeft.add(widthSpinner);
 
-        toolbar.add(new JLabel("  |  "));
+        cardLeft.add(new JLabel(" | "));
 
         JToggleButton drawBtn = new JToggleButton("Draw", true);
+        drawBtn.setBackground(new Color(30, 41, 59));
         JToggleButton textBtn = new JToggleButton("Text", false);
+        textBtn.setBackground(new Color(30, 41, 59));
         styleButton(drawBtn);
         styleButton(textBtn);
-        drawBtn.setBackground(new Color(59, 130, 246));
 
         drawBtn.addActionListener(e -> {
             drawBtn.setSelected(true);
@@ -216,15 +264,15 @@ public class WhiteboardClient {
             updateStatus("Text input mode active. Click on canvas to type.");
         });
 
-        toolbar.add(drawBtn);
-        toolbar.add(textBtn);
+        cardLeft.add(drawBtn);
+        cardLeft.add(textBtn);
 
-        JLabel sizeLabel = new JLabel("  Size: ");
+        JLabel sizeLabel = new JLabel(" Size: ");
         sizeLabel.setFont(new Font("Segoe UI", Font.BOLD, 12));
         sizeLabel.setForeground(new Color(148, 163, 184));
-        toolbar.add(sizeLabel);
+        cardLeft.add(sizeLabel);
 
-        String[] fontSizes = {"Small (14px)", "Medium (20px)", "Large (32px)", "Huge (48px)"};
+        String[] fontSizes = {"14px", "20px", "32px", "48px"};
         int[] fontSizeVals = {14, 20, 32, 48};
         JComboBox<String> sizeCombo = new JComboBox<>(fontSizes);
         sizeCombo.setFont(new Font("Segoe UI", Font.BOLD, 12));
@@ -232,6 +280,7 @@ public class WhiteboardClient {
         sizeCombo.setForeground(new Color(15, 23, 42));
         sizeCombo.setSelectedIndex(1);
         sizeCombo.setBorder(BorderFactory.createLineBorder(new Color(51, 65, 85)));
+        sizeCombo.setPreferredSize(new Dimension(65, 26));
         sizeCombo.addActionListener(e -> {
             int idx = sizeCombo.getSelectedIndex();
             if (idx >= 0 && idx < fontSizeVals.length) {
@@ -240,119 +289,271 @@ public class WhiteboardClient {
                 updateStatus("Font size changed to " + size + "px");
             }
         });
-        toolbar.add(sizeCombo);
+        cardLeft.add(sizeCombo);
 
-        toolbar.add(new JLabel("  |  "));
 
-        JButton eraserBtn = new JButton("Eraser");
-        styleButton(eraserBtn);
-        eraserBtn.setToolTipText("Draw in white to erase");
-        eraserBtn.addActionListener(e -> {
-            whiteboardPanel.setDrawingColor(Color.WHITE);
-            updateStatus("Eraser selected");
-            toolbar.repaint();
-        });
-        toolbar.add(eraserBtn);
+        // Group 2: Center Card (Canvas Navigation & Actions)
+        JPanel cardCenter = new JPanel(new FlowLayout(FlowLayout.CENTER, 8, 4));
+        cardCenter.setBackground(new Color(24, 32, 51));
+        cardCenter.setBorder(BorderFactory.createCompoundBorder(
+            BorderFactory.createLineBorder(new Color(51, 65, 85), 1),
+            BorderFactory.createEmptyBorder(2, 6, 2, 6)
+        ));
 
-        JButton clearBtn = new JButton("Clear All");
-        styleButton(clearBtn);
-        clearBtn.setBackground(new Color(239, 68, 68));
-        clearBtn.setToolTipText("Clear the entire canvas");
-        clearBtn.addActionListener(e -> {
-            whiteboardPanel.clearCanvas();
-            sendMessage("CLEAR_CANVAS:");
-            updateStatus("Canvas cleared");
-        });
-        toolbar.add(clearBtn);
-
-        JButton undoBtn = new JButton("Undo");
-        styleButton(undoBtn);
-        undoBtn.setBackground(new Color(245, 158, 11));
-        undoBtn.setToolTipText("Undo last stroke or text element");
-        undoBtn.addActionListener(e -> {
-            whiteboardPanel.undoLastAction();
-            updateStatus("Undo action performed");
-        });
-        toolbar.add(undoBtn);
-
-        toolbar.add(new JLabel("  |  "));
-
-        JCheckBox normalizeBox = new JCheckBox("Auto-Normalize");
-        normalizeBox.setToolTipText("Automatically smooth hand-drawn circles, rectangles, and lines");
-        normalizeBox.setBackground(new Color(15, 23, 42));
+        JCheckBox normalizeBox = new JCheckBox("Snap");
+        normalizeBox.setToolTipText("Automatically smooth circles, rectangles, and lines");
+        normalizeBox.setBackground(new Color(24, 32, 51));
         normalizeBox.setForeground(new Color(148, 163, 184));
-        normalizeBox.setFont(new Font("Segoe UI", Font.BOLD, 12));
+        normalizeBox.setFont(new Font("Segoe UI", Font.BOLD, 11));
         normalizeBox.setCursor(new Cursor(Cursor.HAND_CURSOR));
         normalizeBox.addActionListener(e -> {
             boolean enabled = normalizeBox.isSelected();
             whiteboardPanel.setAutoNormalize(enabled);
-            updateStatus("Shape auto-normalization: " + (enabled ? "ENABLED" : "DISABLED"));
+            updateStatus("Shape snapping: " + (enabled ? "ENABLED" : "DISABLED"));
         });
-        toolbar.add(normalizeBox);
+        cardCenter.add(normalizeBox);
 
         JCheckBox gridBox = new JCheckBox("Grid", true);
         gridBox.setToolTipText("Toggle background dotted grid");
-        gridBox.setBackground(new Color(15, 23, 42));
+        gridBox.setBackground(new Color(24, 32, 51));
         gridBox.setForeground(new Color(148, 163, 184));
-        gridBox.setFont(new Font("Segoe UI", Font.BOLD, 12));
+        gridBox.setFont(new Font("Segoe UI", Font.BOLD, 11));
         gridBox.setCursor(new Cursor(Cursor.HAND_CURSOR));
         gridBox.addActionListener(e -> {
             boolean enabled = gridBox.isSelected();
             whiteboardPanel.setShowGrid(enabled);
             updateStatus("Canvas grid: " + (enabled ? "VISIBLE" : "HIDDEN"));
         });
-        toolbar.add(gridBox);
+        cardCenter.add(gridBox);
+
+        cardCenter.add(new JLabel(" | "));
+
+        JButton eraserBtn = new JButton("Eraser");
+        eraserBtn.setBackground(new Color(30, 41, 59));
+        styleButton(eraserBtn);
+        eraserBtn.setToolTipText("Draw in white to erase");
+        eraserBtn.addActionListener(e -> {
+            whiteboardPanel.setDrawingColor(Color.WHITE);
+            updateStatus("Eraser selected");
+            cardCenter.repaint();
+        });
+        cardCenter.add(eraserBtn);
+
+        JButton undoBtn = new JButton("Undo");
+        undoBtn.setBackground(new Color(245, 158, 11));
+        styleButton(undoBtn);
+        undoBtn.setToolTipText("Undo last stroke or text element");
+        undoBtn.addActionListener(e -> {
+            whiteboardPanel.undoLastAction();
+            updateStatus("Undo action performed");
+        });
+        cardCenter.add(undoBtn);
+
+        JButton clearBtn = new JButton("Clear");
+        clearBtn.setBackground(new Color(239, 68, 68));
+        styleButton(clearBtn);
+        clearBtn.setToolTipText("Clear the entire canvas");
+        clearBtn.addActionListener(e -> {
+            whiteboardPanel.clearCanvas();
+            NetworkMessage clearMsg = new NetworkMessage("CLEAR_CANVAS");
+            sendMessage(gson.toJson(clearMsg));
+            updateStatus("Canvas cleared");
+        });
+        cardCenter.add(clearBtn);
+
+        cardCenter.add(new JLabel(" | "));
+
+        JButton zoomOutBtn = new JButton("-");
+        zoomOutBtn.setBackground(new Color(30, 41, 59));
+        styleButton(zoomOutBtn);
+        zoomOutBtn.setToolTipText("Zoom Out");
+        zoomOutBtn.setPreferredSize(new Dimension(36, 26));
+        zoomOutBtn.addActionListener(e -> {
+            whiteboardPanel.setZoomFactor(whiteboardPanel.getZoomFactor() - 0.1);
+            updateStatus("Zoom: " + (int) (whiteboardPanel.getZoomFactor() * 100) + "%");
+        });
+        cardCenter.add(zoomOutBtn);
+
+        JButton zoomResetBtn = new JButton("100%");
+        zoomResetBtn.setBackground(new Color(30, 41, 59));
+        styleButton(zoomResetBtn);
+        zoomResetBtn.setToolTipText("Reset Zoom");
+        zoomResetBtn.addActionListener(e -> {
+            whiteboardPanel.setZoomFactor(1.0);
+            updateStatus("Zoom: 100%");
+        });
+        cardCenter.add(zoomResetBtn);
+
+        JButton zoomInBtn = new JButton("+");
+        zoomInBtn.setBackground(new Color(30, 41, 59));
+        styleButton(zoomInBtn);
+        zoomInBtn.setToolTipText("Zoom In");
+        zoomInBtn.setPreferredSize(new Dimension(36, 26));
+        zoomInBtn.addActionListener(e -> {
+            whiteboardPanel.setZoomFactor(whiteboardPanel.getZoomFactor() + 0.1);
+            updateStatus("Zoom: " + (int) (whiteboardPanel.getZoomFactor() * 100) + "%");
+        });
+        cardCenter.add(zoomInBtn);
+
+
+        // Group 3: Right Card (AI Actions, IO & Connect)
+        JPanel cardRight = new JPanel(new FlowLayout(FlowLayout.RIGHT, 8, 4));
+        cardRight.setBackground(new Color(24, 32, 51));
+        cardRight.setBorder(BorderFactory.createCompoundBorder(
+            BorderFactory.createLineBorder(new Color(51, 65, 85), 1),
+            BorderFactory.createEmptyBorder(2, 6, 2, 6)
+        ));
 
         JButton blockSlangBtn = new JButton("Block Slang");
-        styleButton(blockSlangBtn);
         blockSlangBtn.setBackground(new Color(99, 102, 241));
-        blockSlangBtn.setToolTipText("Block a new slang word dynamically");
+        styleButton(blockSlangBtn);
         blockSlangBtn.addActionListener(e -> {
-            String word = WhiteboardPanel.showCustomInputDialog(frame, "Block Slang", "Enter custom slang word to block:");
+            String word = WhiteboardPanel.showCustomInputDialog(frame, "Block Slang", "Enter slang word to block:");
             if (word != null && !word.trim().isEmpty()) {
                 String targetWord = word.trim().toLowerCase();
                 ContentModerator.addBlockedWord(targetWord);
-                sendMessage("BLOCK_SLANG:" + targetWord);
+                
+                NetworkMessage blockMsg = new NetworkMessage("BLOCK_SLANG");
+                blockMsg.setText(targetWord);
+                sendMessage(gson.toJson(blockMsg));
+                
                 updateStatus("Custom slang blocked: " + targetWord);
             }
         });
-        toolbar.add(blockSlangBtn);
+        cardRight.add(blockSlangBtn);
 
-        toolbar.add(new JLabel("  |  "));
+        JButton solveMathBtn = new JButton("Solve Math");
+        solveMathBtn.setBackground(new Color(16, 185, 129));
+        styleButton(solveMathBtn);
+        solveMathBtn.setToolTipText("AI solve math expression drawn on canvas");
+        solveMathBtn.addActionListener(e -> {
+            updateStatus("Solving math expression...");
+            new Thread(() -> {
+                try {
+                    MathExpressionSolver.MathSolveResponse resp = MathExpressionSolver.solve(whiteboardPanel.getStrokes());
+                    if (resp != null && resp.result != null && !resp.result.equals("?")) {
+                        SwingUtilities.invokeLater(() -> {
+                            whiteboardPanel.addLocalTextElement(resp.result, resp.text_x, resp.text_y, whiteboardPanel.getDrawingColor(), whiteboardPanel.getCurrentFontSize());
+                            updateStatus("Math solved: " + resp.expression + " = " + resp.result);
+                        });
+                    } else {
+                        SwingUtilities.invokeLater(() -> {
+                            JOptionPane.showMessageDialog(frame,
+                                "Could not recognize any valid handwritten math expression.\n" +
+                                "Make sure to write a clear expression (e.g., 5 + 5 =) using freehand drawing.\n" +
+                                "Ensure other unrelated drawings on the canvas are cleared first.",
+                                "AI Math Solver",
+                                JOptionPane.WARNING_MESSAGE);
+                            updateStatus("Math solving failed");
+                        });
+                    }
+                } catch (Exception ex) {
+                    SwingUtilities.invokeLater(() -> {
+                        updateStatus("Math solving error: " + ex.getMessage());
+                    });
+                }
+            }).start();
+        });
+        cardRight.add(solveMathBtn);
 
-        JButton connectBtn = new JButton("Connect");
+        cardRight.add(new JLabel(" | "));
+
+        JButton exportBtn = new JButton("Export");
+        exportBtn.setBackground(new Color(245, 158, 11)); // Amber
+        styleButton(exportBtn);
+        exportBtn.addActionListener(e -> {
+            JFileChooser fileChooser = new JFileChooser();
+            fileChooser.setDialogTitle("Export Whiteboard as PNG");
+            fileChooser.setFileFilter(new javax.swing.filechooser.FileNameExtensionFilter("PNG Image (*.png)", "png"));
+            int userSelection = fileChooser.showSaveDialog(frame);
+            if (userSelection == JFileChooser.APPROVE_OPTION) {
+                File fileToSave = fileChooser.getSelectedFile();
+                String path = fileToSave.getAbsolutePath();
+                if (!path.toLowerCase().endsWith(".png")) {
+                    fileToSave = new File(path + ".png");
+                }
+                whiteboardPanel.exportToPNG(fileToSave);
+                updateStatus("Canvas exported: " + fileToSave.getName());
+            }
+        });
+        cardRight.add(exportBtn);
+
+        JButton saveBoardBtn = new JButton("Save Board");
+        saveBoardBtn.setBackground(new Color(30, 41, 59));
+        styleButton(saveBoardBtn);
+        saveBoardBtn.addActionListener(e -> {
+            if (!running) {
+                JOptionPane.showMessageDialog(frame, "You must be connected to the server to save your board.", "Save Board", JOptionPane.WARNING_MESSAGE);
+                return;
+            }
+            String boardName = WhiteboardPanel.showCustomInputDialog(frame, "Save Board", "Enter name for this board file:");
+            if (boardName != null && !boardName.trim().isEmpty()) {
+                java.util.List<String> actions = whiteboardPanel.serializeCanvasState();
+                String jsonData = gson.toJson(actions);
+                
+                NetworkMessage saveMsg = new NetworkMessage("SAVE_BOARD");
+                saveMsg.setSenderId(loggedInUser);
+                saveMsg.setText(boardName.trim());
+                saveMsg.setJsonData(jsonData);
+                sendMessage(gson.toJson(saveMsg));
+                updateStatus("Board '" + boardName + "' saved to SQLite DB.");
+            }
+        });
+        cardRight.add(saveBoardBtn);
+
+        JButton loadBoardBtn = new JButton("Load Board");
+        loadBoardBtn.setBackground(new Color(30, 41, 59));
+        styleButton(loadBoardBtn);
+        loadBoardBtn.addActionListener(e -> {
+            if (!running) {
+                JOptionPane.showMessageDialog(frame, "You must be connected to the server to load a board.", "Load Board", JOptionPane.WARNING_MESSAGE);
+                return;
+            }
+            NetworkMessage getMsg = new NetworkMessage("GET_BOARDS");
+            getMsg.setSenderId(loggedInUser);
+            sendMessage(gson.toJson(getMsg));
+            updateStatus("Retrieving saved board files...");
+        });
+        cardRight.add(loadBoardBtn);
+
+        cardRight.add(new JLabel(" | "));
+
+        connectBtn = new JButton("Connect");
+        connectBtn.setBackground(new Color(30, 41, 59));
         styleButton(connectBtn);
-        connectBtn.setToolTipText("Connect to the whiteboard server");
         connectBtn.addActionListener(e -> {
             if (!running) {
                 connectToServer();
-                connectBtn.setText("Disconnect");
             } else {
                 disconnect();
-                connectBtn.setText("Connect");
             }
         });
-        toolbar.add(connectBtn);
+        cardRight.add(connectBtn);
 
-        return toolbar;
+        mainToolbar.add(cardLeft, BorderLayout.WEST);
+        mainToolbar.add(cardCenter, BorderLayout.CENTER);
+        mainToolbar.add(cardRight, BorderLayout.EAST);
+
+        return mainToolbar;
     }
 
     private void connectToServer() {
 
         new Thread(() -> {
             try {
-                System.out.println("[Client] Connecting to " + SERVER_HOST
-                    + ":" + SERVER_PORT + "...");
+                System.out.println("[Client] Connecting to " + SERVER_HOST + ":" + SERVER_PORT + "...");
 
                 java.net.Socket socket = new java.net.Socket(SERVER_HOST, SERVER_PORT);
-
-                connection = new Connection(socket, "local-client");
-
+                connection = new ClientConnection(socket, "local-client");
                 running = true;
 
-                updateStatus("Connected to server at " + SERVER_HOST
-                    + ":" + SERVER_PORT);
+                updateStatus("Connected to server as " + loggedInUser + " | Server: " + SERVER_HOST + ":" + SERVER_PORT);
                 System.out.println("[Client] Connected successfully!");
+                SwingUtilities.invokeLater(() -> {
+                    if (connectBtn != null) {
+                        connectBtn.setText("Disconnect");
+                    }
+                });
 
                 receiveMessages();
 
@@ -376,15 +577,11 @@ public class WhiteboardClient {
     private void receiveMessages() {
         try {
             String message;
-
             while (running && (message = connection.receiveMessage()) != null) {
-
-                System.out.println("[Client] Received: " + message);
-
+                System.out.println("[Client] Received raw string: " + message);
                 final String msg = message;
                 SwingUtilities.invokeLater(() -> handleServerMessage(msg));
             }
-
             System.out.println("[Client] Server connection closed.");
 
         } catch (IOException e) {
@@ -393,7 +590,6 @@ public class WhiteboardClient {
                 SwingUtilities.invokeLater(() ->
                     updateStatus("Connection lost: " + e.getMessage()));
             }
-
         } finally {
             running = false;
             SwingUtilities.invokeLater(() ->
@@ -401,175 +597,149 @@ public class WhiteboardClient {
         }
     }
 
-    private void handleServerMessage(String message) {
-        if (message == null || message.isEmpty()) {
+    private void handleServerMessage(String jsonMessage) {
+        if (jsonMessage == null || jsonMessage.isEmpty()) {
             return;
         }
 
-        if (message.startsWith("FROM:")) {
-            handleBroadcastMessage(message);
-            return;
-        }
+        try {
+            NetworkMessage msg = gson.fromJson(jsonMessage, NetworkMessage.class);
+            if (msg == null || msg.getType() == null) {
+                return;
+            }
 
-        String messageType;
-        String messageData = "";
-        if (message.contains(":")) {
-            int colonIndex = message.indexOf(":");
-            messageType = message.substring(0, colonIndex).toUpperCase();
-            messageData = message.substring(colonIndex + 1);
-        } else {
-            messageType = message.toUpperCase();
-        }
+            String messageType = msg.getType().toUpperCase();
 
-        switch (messageType) {
-            case "WELCOME":
+            if (msg.getSenderId() != null && !msg.getSenderId().equals(clientId)) {
+                handleBroadcastMessage(msg);
+                return;
+            }
 
-                clientId = messageData;
-                frame.setTitle("AI-Augmented Collaborative Whiteboard — " + clientId);
-                updateStatus("Connected as " + clientId);
-                System.out.println("[Client] Assigned ID: " + clientId);
-                break;
+            switch (messageType) {
+                case "WELCOME":
+                    clientId = msg.getSenderId();
+                    frame.setTitle("AI-Augmented Collaborative Whiteboard — " + loggedInUser + " (" + clientId + ")");
+                    updateStatus("Connected as " + loggedInUser + " (" + clientId + ")");
+                    System.out.println("[Client] Assigned ID: " + clientId);
+                    break;
 
-            case "USER_JOINED":
-                updateStatus("User joined: " + messageData);
-                System.out.println("[Client] User joined: " + messageData);
-                break;
+                case "USER_JOINED":
+                    updateStatus("User joined: " + msg.getSenderId());
+                    System.out.println("[Client] User joined: " + msg.getSenderId());
+                    break;
 
-            case "USER_LEFT":
-                updateStatus("User left: " + messageData);
-                System.out.println("[Client] User left: " + messageData);
-                break;
+                case "USER_LEFT":
+                    updateStatus("User left: " + msg.getSenderId());
+                    System.out.println("[Client] User left: " + msg.getSenderId());
+                    break;
 
-            case "SERVER_SHUTDOWN":
-                updateStatus("Server is shutting down: " + messageData);
-                running = false;
-                break;
+                case "SERVER_SHUTDOWN":
+                    updateStatus("Server is shutting down: " + msg.getText());
+                    running = false;
+                    break;
 
-            case "ERROR":
-                System.err.println("[Client] Server error: " + messageData);
-                updateStatus("Server error: " + messageData);
-                break;
+                case "ERROR":
+                    System.err.println("[Client] Server error: " + msg.getText());
+                    updateStatus("Server error: " + msg.getText());
+                    break;
 
-            default:
-                System.out.println("[Client] Unknown message: " + message);
-                break;
+                case "BOARD_LIST":
+                    String listJson = msg.getJsonData();
+                    java.util.List<String> boards = gson.fromJson(listJson, new com.google.gson.reflect.TypeToken<java.util.List<String>>(){}.getType());
+                    SwingUtilities.invokeLater(() -> showLoadBoardDialog(boards));
+                    break;
+
+                case "LOAD_BOARD_STATE":
+                case "CHAT_MESSAGE":
+                case "CLEAR_CANVAS":
+                case "UNDO":
+                case "BLOCK_SLANG":
+                    handleBroadcastMessage(msg);
+                    break;
+
+                default:
+                    System.out.println("[Client] Unknown system message: " + messageType);
+                    break;
+            }
+
+        } catch (Exception e) {
+            System.err.println("[Client] Error parsing message: " + e.getMessage());
         }
     }
 
-    private void handleBroadcastMessage(String message) {
+    private void handleBroadcastMessage(NetworkMessage msg) {
         try {
-
-            int pipeIndex = message.indexOf("|");
-            if (pipeIndex == -1) return;
-
-            String actionPart = message.substring(pipeIndex + 1);
-
-            String actionType;
-            String actionData = "";
-            if (actionPart.contains(":")) {
-                int colonIndex = actionPart.indexOf(":");
-                actionType = actionPart.substring(0, colonIndex).toUpperCase();
-                actionData = actionPart.substring(colonIndex + 1);
-            } else {
-                actionType = actionPart.toUpperCase();
-            }
+            String actionType = msg.getType().toUpperCase();
 
             switch (actionType) {
-                case "DRAW_LINE":
-
-                    String[] coords = actionData.split(",");
-                    if (coords.length >= 4) {
-                        int x1 = Integer.parseInt(coords[0].trim());
-                        int y1 = Integer.parseInt(coords[1].trim());
-                        int x2 = Integer.parseInt(coords[2].trim());
-                        int y2 = Integer.parseInt(coords[3].trim());
-                        Color col = Color.BLACK;
-                        int w = 3;
-                        if (coords.length >= 6) {
-                            col = new Color(Integer.parseInt(coords[4].trim()));
-                            w = Integer.parseInt(coords[5].trim());
-                        }
-                        whiteboardPanel.addRemoteLine(x1, y1, x2, y2, col, w);
-                    }
+                case "DRAW_LINE": {
+                    int x1 = msg.getX1();
+                    int y1 = msg.getY1();
+                    int x2 = msg.getX2();
+                    int y2 = msg.getY2();
+                    Color col = Color.BLACK;
+                    int w = 3;
+                    if (msg.getColorRgb() != null) col = new Color(msg.getColorRgb());
+                    if (msg.getStrokeWidth() != null) w = msg.getStrokeWidth();
+                    whiteboardPanel.addRemoteLine(x1, y1, x2, y2, col, w);
                     break;
+                }
 
-                case "DRAW_RECT":
-
-                    String[] rectData = actionData.split(",");
-                    if (rectData.length >= 6) {
-                        int x = Integer.parseInt(rectData[0].trim());
-                        int y = Integer.parseInt(rectData[1].trim());
-                        int w = Integer.parseInt(rectData[2].trim());
-                        int h = Integer.parseInt(rectData[3].trim());
-                        Color col = new Color(Integer.parseInt(rectData[4].trim()));
-                        int wSize = Integer.parseInt(rectData[5].trim());
-                        whiteboardPanel.addRemoteShape(WhiteboardPanel.Stroke.ShapeType.RECTANGLE, x, y, w, h, col, wSize);
-                    }
+                case "DRAW_RECT": {
+                    int x = msg.getX1();
+                    int y = msg.getY1();
+                    int w = msg.getX2();
+                    int h = msg.getY2();
+                    Color col = new Color(msg.getColorRgb());
+                    int wSize = msg.getStrokeWidth();
+                    whiteboardPanel.addRemoteShape(WhiteboardPanel.Stroke.ShapeType.RECTANGLE, x, y, w, h, col, wSize);
                     break;
+                }
 
-                case "DRAW_CIRCLE":
-
-                    String[] circleData = actionData.split(",");
-                    if (circleData.length >= 6) {
-                        int x = Integer.parseInt(circleData[0].trim());
-                        int y = Integer.parseInt(circleData[1].trim());
-                        int w = Integer.parseInt(circleData[2].trim());
-                        int h = Integer.parseInt(circleData[3].trim());
-                        Color col = new Color(Integer.parseInt(circleData[4].trim()));
-                        int wSize = Integer.parseInt(circleData[5].trim());
-                        whiteboardPanel.addRemoteShape(WhiteboardPanel.Stroke.ShapeType.CIRCLE, x, y, w, h, col, wSize);
-                    }
+                case "DRAW_CIRCLE": {
+                    int x = msg.getX1();
+                    int y = msg.getY1();
+                    int w = msg.getX2();
+                    int h = msg.getY2();
+                    Color col = new Color(msg.getColorRgb());
+                    int wSize = msg.getStrokeWidth();
+                    whiteboardPanel.addRemoteShape(WhiteboardPanel.Stroke.ShapeType.CIRCLE, x, y, w, h, col, wSize);
                     break;
+                }
 
-                case "DRAW_TRI":
-
-                    String[] triData = actionData.split(",");
-                    if (triData.length >= 6) {
-                        int x = Integer.parseInt(triData[0].trim());
-                        int y = Integer.parseInt(triData[1].trim());
-                        int w = Integer.parseInt(triData[2].trim());
-                        int h = Integer.parseInt(triData[3].trim());
-                        Color col = new Color(Integer.parseInt(triData[4].trim()));
-                        int wSize = Integer.parseInt(triData[5].trim());
-                        whiteboardPanel.addRemoteShape(WhiteboardPanel.Stroke.ShapeType.TRIANGLE, x, y, w, h, col, wSize);
-                    }
+                case "DRAW_TRI": {
+                    int x = msg.getX1();
+                    int y = msg.getY1();
+                    int w = msg.getX2();
+                    int h = msg.getY2();
+                    Color col = new Color(msg.getColorRgb());
+                    int wSize = msg.getStrokeWidth();
+                    whiteboardPanel.addRemoteShape(WhiteboardPanel.Stroke.ShapeType.TRIANGLE, x, y, w, h, col, wSize);
                     break;
+                }
 
-                case "TEXT":
-
-                    String[] textParts = actionData.split(",", 5);
-                    if (textParts.length >= 4) {
-                        int x = Integer.parseInt(textParts[0].trim());
-                        int y = Integer.parseInt(textParts[1].trim());
-                        Color col = new Color(Integer.parseInt(textParts[2].trim()));
-                        int fontSize = 20;
-                        String content;
-                        if (textParts.length == 5) {
-                            fontSize = Integer.parseInt(textParts[3].trim());
-                            content = textParts[4];
-                        } else {
-                            content = textParts[3];
-                        }
-                        whiteboardPanel.addRemoteText(content, x, y, col, fontSize);
-                    }
+                case "TEXT": {
+                    int x = msg.getX1();
+                    int y = msg.getY1();
+                    Color col = new Color(msg.getColorRgb());
+                    int fontSize = msg.getFontSize();
+                    String content = msg.getText();
+                    whiteboardPanel.addRemoteText(content, x, y, col, fontSize);
                     break;
+                }
 
-                case "MOVE_TEXT":
-
-                    String[] moveData = actionData.split(",");
-                    if (moveData.length >= 4) {
-                        int oldX = Integer.parseInt(moveData[0].trim());
-                        int oldY = Integer.parseInt(moveData[1].trim());
-                        int newX = Integer.parseInt(moveData[2].trim());
-                        int newY = Integer.parseInt(moveData[3].trim());
-                        whiteboardPanel.moveRemoteText(oldX, oldY, newX, newY);
-                    }
+                case "MOVE_TEXT": {
+                    int oldX = msg.getX1();
+                    int oldY = msg.getY1();
+                    int newX = msg.getX2();
+                    int newY = msg.getY2();
+                    whiteboardPanel.moveRemoteText(oldX, oldY, newX, newY);
                     break;
+                }
 
                 case "BLOCK_SLANG":
-
-                    ContentModerator.addBlockedWord(actionData);
-                    updateStatus("Dynamic slang blocked: " + actionData);
+                    ContentModerator.addBlockedWord(msg.getText());
+                    updateStatus("Dynamic slang blocked: " + msg.getText());
                     break;
 
                 case "UNDO":
@@ -577,28 +747,47 @@ public class WhiteboardClient {
                     updateStatus("Undo action performed by remote user");
                     break;
 
-                case "DRAW_START":
-
-                    break;
-
                 case "CLEAR_CANVAS":
-
                     whiteboardPanel.clearCanvas();
                     updateStatus("Canvas cleared by remote user");
                     break;
 
+                case "DRAW_START":
                 case "DRAW_END":
-
                     break;
+
+                case "CHAT_MESSAGE": {
+                    String sender = msg.getSenderId();
+                    String content = msg.getText();
+                    appendChat(sender, content);
+                    break;
+                }
+
+                case "LOAD_BOARD_STATE": {
+                    String boardData = msg.getJsonData();
+                    if (boardData != null) {
+                        whiteboardPanel.clearCanvas();
+                        String[] actions = gson.fromJson(boardData, String[].class);
+                        for (String actionJson : actions) {
+                            try {
+                                NetworkMessage actionMsg = gson.fromJson(actionJson, NetworkMessage.class);
+                                handleBroadcastMessage(actionMsg);
+                            } catch (Exception ex) {
+                                System.err.println("[Client] Error rebuilding canvas state: " + ex.getMessage());
+                            }
+                        }
+                        updateStatus("Whiteboard loaded and synchronized.");
+                    }
+                    break;
+                }
 
                 default:
                     System.out.println("[Client] Unknown broadcast action: " + actionType);
                     break;
             }
 
-        } catch (NumberFormatException e) {
-            System.err.println("[Client] Error parsing broadcast message: "
-                + e.getMessage());
+        } catch (Exception e) {
+            System.err.println("[Client] Error parsing broadcast message: " + e.getMessage());
         }
     }
 
@@ -613,39 +802,345 @@ public class WhiteboardClient {
             System.out.println("[Client] Disconnecting...");
             running = false;
 
-            connection.sendMessage("DISCONNECT:");
+            NetworkMessage disc = new NetworkMessage("DISCONNECT");
+            connection.sendMessage(gson.toJson(disc));
 
             connection.close();
             connection = null;
 
             updateStatus("Disconnected");
             System.out.println("[Client] Disconnected from server.");
+            SwingUtilities.invokeLater(() -> {
+                if (connectBtn != null) {
+                    connectBtn.setText("Connect");
+                }
+            });
+        }
+    }
+
+    private JPanel createChatPanel() {
+        JPanel chatPanel = new JPanel(new BorderLayout(5, 5));
+        chatPanel.setPreferredSize(new Dimension(280, 0));
+        chatPanel.setBackground(new Color(15, 23, 42));
+        chatPanel.setBorder(BorderFactory.createCompoundBorder(
+            BorderFactory.createMatteBorder(0, 1, 0, 0, new Color(30, 41, 59)),
+            BorderFactory.createEmptyBorder(8, 8, 8, 8)
+        ));
+
+        JLabel titleLabel = new JLabel("Collaborative Chat");
+        titleLabel.setFont(new Font("Segoe UI", Font.BOLD, 14));
+        titleLabel.setForeground(Color.WHITE);
+        titleLabel.setBorder(BorderFactory.createEmptyBorder(0, 0, 8, 0));
+        chatPanel.add(titleLabel, BorderLayout.NORTH);
+
+        chatPane = new JTextPane();
+        chatPane.setEditable(false);
+        chatPane.setContentType("text/html");
+        
+        kit = new javax.swing.text.html.HTMLEditorKit();
+        doc = new javax.swing.text.html.HTMLDocument();
+        chatPane.setEditorKit(kit);
+        chatPane.setDocument(doc);
+
+        // Styling the chat log elements
+        javax.swing.text.html.StyleSheet styleSheet = kit.getStyleSheet();
+        styleSheet.addRule("body { font-family: 'Segoe UI', -apple-system, sans-serif; color: #f8fafc; background-color: #182033; margin: 4px; padding: 0; }");
+
+        chatPane.setBackground(new Color(24, 32, 51));
+        chatPane.setForeground(Color.WHITE);
+        chatPane.setCaretColor(Color.WHITE);
+        chatPane.setBorder(BorderFactory.createEmptyBorder(4, 4, 4, 4));
+
+        JScrollPane chatScroll = new JScrollPane(chatPane);
+        chatScroll.setBorder(BorderFactory.createLineBorder(new Color(51, 65, 85)));
+        chatScroll.getVerticalScrollBar().setUnitIncrement(12);
+        chatPanel.add(chatScroll, BorderLayout.CENTER);
+
+        JPanel inputPanel = new JPanel(new BorderLayout(6, 0));
+        inputPanel.setBackground(new Color(15, 23, 42));
+        inputPanel.setBorder(BorderFactory.createEmptyBorder(8, 0, 0, 0));
+
+        chatInput = new JTextField();
+        chatInput.setFont(new Font("Segoe UI", Font.PLAIN, 13));
+        chatInput.setBackground(new Color(30, 41, 59));
+        chatInput.setForeground(Color.WHITE);
+        chatInput.setCaretColor(Color.WHITE);
+        chatInput.setBorder(BorderFactory.createCompoundBorder(
+            BorderFactory.createLineBorder(new Color(51, 65, 85)),
+            BorderFactory.createEmptyBorder(6, 8, 6, 8)
+        ));
+
+        JButton sendBtn = new JButton("Send");
+        sendBtn.setBackground(new Color(59, 130, 246));
+        styleButton(sendBtn);
+
+        ActionListener sendAction = e -> {
+            String text = chatInput.getText().trim();
+            if (!text.isEmpty()) {
+                sendChatMessage(text);
+                chatInput.setText("");
+            }
+        };
+        chatInput.addActionListener(sendAction);
+        sendBtn.addActionListener(sendAction);
+
+        inputPanel.add(chatInput, BorderLayout.CENTER);
+        inputPanel.add(sendBtn, BorderLayout.EAST);
+
+        chatPanel.add(inputPanel, BorderLayout.SOUTH);
+
+        // Add a friendly greeting message to start
+        appendChat("System", "Welcome to Collaborative Chat! Keep it clean.");
+
+        return chatPanel;
+    }
+
+    private void sendChatMessage(String rawMessage) {
+        if (!running) {
+            appendChat("System", "Not connected to the server. Message not sent.");
+            return;
+        }
+        NetworkMessage msg = new NetworkMessage("CHAT_MESSAGE");
+        msg.setText(rawMessage);
+        msg.setSenderId(loggedInUser);
+        sendMessage(gson.toJson(msg));
+    }
+
+    private void appendChat(String sender, String message) {
+        if (chatPane != null) {
+            SwingUtilities.invokeLater(() -> {
+                try {
+                    boolean isMe = loggedInUser.equalsIgnoreCase(sender);
+                    String color = isMe ? "#60a5fa" : "#818cf8"; // Lighter colors for dark theme
+                    if ("System".equalsIgnoreCase(sender)) {
+                        color = "#f59e0b";
+                    }
+
+                    // Format sender display name
+                    String displayName = sender;
+                    if (isMe) {
+                        displayName = sender + " (You)";
+                    }
+
+                    String html = "<div style=\"margin-bottom: 8px; padding: 8px 10px; border-radius: 6px; background-color: #1e293b; border: 1px solid #334155;\">" +
+                            "<span style=\"color: " + color + "; font-weight: bold; font-size: 13px; font-family: 'Segoe UI', sans-serif;\">" + displayName + "</span>" +
+                            "<div style=\"color: #f1f5f9; font-size: 14px; margin-top: 4px; font-family: 'Segoe UI', sans-serif; font-weight: normal;\">" + message + "</div>" +
+                            "</div>";
+
+                    kit.insertHTML(doc, doc.getLength(), html, 0, 0, null);
+                    chatPane.setCaretPosition(doc.getLength());
+                } catch (Exception e) {
+                    System.err.println("[Client] Error writing HTML chat: " + e.getMessage());
+                }
+            });
+        }
+    }
+
+    private void showLoadBoardDialog(java.util.List<String> boards) {
+        if (boards == null || boards.isEmpty()) {
+            JOptionPane.showMessageDialog(frame, "No saved boards found for this account.", "Load Board", JOptionPane.INFORMATION_MESSAGE);
+            return;
+        }
+
+        String[] boardArray = boards.toArray(new String[0]);
+        String selectedBoard = (String) JOptionPane.showInputDialog(
+            frame,
+            "Select a board to load:",
+            "Load Board from DB",
+            JOptionPane.QUESTION_MESSAGE,
+            null,
+            boardArray,
+            boardArray[0]
+        );
+
+        if (selectedBoard != null) {
+            NetworkMessage loadMsg = new NetworkMessage("LOAD_BOARD");
+            loadMsg.setSenderId(loggedInUser);
+            loadMsg.setText(selectedBoard);
+            sendMessage(gson.toJson(loadMsg));
+            updateStatus("Requesting load of board '" + selectedBoard + "'...");
         }
     }
 
     private void updateStatus(String message) {
         if (statusLabel != null) {
-
             if (SwingUtilities.isEventDispatchThread()) {
-                statusLabel.setText("  Status: " + message);
+                statusLabel.setText("  Status: " + message + " | User: " + loggedInUser);
             } else {
                 SwingUtilities.invokeLater(() ->
-                    statusLabel.setText("  Status: " + message));
+                    statusLabel.setText("  Status: " + message + " | User: " + loggedInUser));
             }
         }
+    }
+
+    public static boolean showLoginDialog(JFrame parentFrame) {
+        JDialog dialog = new JDialog(parentFrame, "Whiteboard Login", true);
+        dialog.setUndecorated(true);
+        dialog.getRootPane().setBorder(BorderFactory.createLineBorder(new Color(51, 65, 85), 2));
+
+        JPanel panel = new JPanel();
+        panel.setLayout(new GridBagLayout());
+        panel.setBorder(BorderFactory.createEmptyBorder(20, 20, 20, 20));
+        panel.setBackground(new Color(15, 23, 42));
+
+        GridBagConstraints gbc = new GridBagConstraints();
+        gbc.insets = new Insets(8, 8, 8, 8);
+        gbc.fill = GridBagConstraints.HORIZONTAL;
+
+        JLabel titleLabel = new JLabel("Collaborative Whiteboard", SwingConstants.CENTER);
+        titleLabel.setFont(new Font("Segoe UI", Font.BOLD, 16));
+        titleLabel.setForeground(Color.WHITE);
+        gbc.gridx = 0;
+        gbc.gridy = 0;
+        gbc.gridwidth = 2;
+        panel.add(titleLabel, gbc);
+
+        JLabel userLabel = new JLabel("Username:");
+        userLabel.setFont(new Font("Segoe UI", Font.BOLD, 12));
+        userLabel.setForeground(new Color(148, 163, 184));
+        gbc.gridy = 1;
+        gbc.gridwidth = 1;
+        panel.add(userLabel, gbc);
+
+        JTextField userField = new JTextField(15);
+        userField.setFont(new Font("Segoe UI", Font.PLAIN, 14));
+        userField.setBackground(new Color(30, 41, 59));
+        userField.setForeground(Color.WHITE);
+        userField.setCaretColor(Color.WHITE);
+        userField.setBorder(BorderFactory.createCompoundBorder(
+            BorderFactory.createLineBorder(new Color(51, 65, 85)),
+            BorderFactory.createEmptyBorder(6, 8, 6, 8)
+        ));
+        gbc.gridx = 1;
+        panel.add(userField, gbc);
+
+        JLabel passLabel = new JLabel("Password:");
+        passLabel.setFont(new Font("Segoe UI", Font.BOLD, 12));
+        passLabel.setForeground(new Color(148, 163, 184));
+        gbc.gridx = 0;
+        gbc.gridy = 2;
+        panel.add(passLabel, gbc);
+
+        JPasswordField passField = new JPasswordField(15);
+        passField.setFont(new Font("Segoe UI", Font.PLAIN, 14));
+        passField.setBackground(new Color(30, 41, 59));
+        passField.setForeground(Color.WHITE);
+        passField.setCaretColor(Color.WHITE);
+        passField.setBorder(BorderFactory.createCompoundBorder(
+            BorderFactory.createLineBorder(new Color(51, 65, 85)),
+            BorderFactory.createEmptyBorder(6, 8, 6, 8)
+        ));
+        gbc.gridx = 1;
+        panel.add(passField, gbc);
+
+        JLabel msgLabel = new JLabel("Enter username and password.", SwingConstants.CENTER);
+        msgLabel.setFont(new Font("Segoe UI", Font.BOLD, 11));
+        msgLabel.setForeground(new Color(148, 163, 184));
+        gbc.gridx = 0;
+        gbc.gridy = 3;
+        gbc.gridwidth = 2;
+        panel.add(msgLabel, gbc);
+
+        JPanel btnPanel = new JPanel(new FlowLayout(FlowLayout.RIGHT, 10, 0));
+        btnPanel.setBackground(new Color(15, 23, 42));
+
+        JButton registerBtn = new JButton("Register");
+        registerBtn.setFont(new Font("Segoe UI", Font.BOLD, 12));
+        registerBtn.setForeground(Color.WHITE);
+        registerBtn.setBackground(new Color(99, 102, 241));
+        registerBtn.setOpaque(true);
+        registerBtn.setBorderPainted(false);
+        registerBtn.setFocusPainted(false);
+        registerBtn.setBorder(BorderFactory.createEmptyBorder(6, 12, 6, 12));
+        registerBtn.setCursor(new Cursor(Cursor.HAND_CURSOR));
+
+        JButton loginBtn = new JButton("Login");
+        loginBtn.setFont(new Font("Segoe UI", Font.BOLD, 12));
+        loginBtn.setForeground(Color.WHITE);
+        loginBtn.setBackground(new Color(59, 130, 246));
+        loginBtn.setOpaque(true);
+        loginBtn.setBorderPainted(false);
+        loginBtn.setFocusPainted(false);
+        loginBtn.setBorder(BorderFactory.createEmptyBorder(6, 12, 6, 12));
+        loginBtn.setCursor(new Cursor(Cursor.HAND_CURSOR));
+
+        JButton exitBtn = new JButton("Exit");
+        exitBtn.setFont(new Font("Segoe UI", Font.BOLD, 12));
+        exitBtn.setForeground(Color.WHITE);
+        exitBtn.setBackground(new Color(51, 65, 85));
+        exitBtn.setOpaque(true);
+        exitBtn.setBorderPainted(false);
+        exitBtn.setFocusPainted(false);
+        exitBtn.setBorder(BorderFactory.createEmptyBorder(6, 12, 6, 12));
+        exitBtn.setCursor(new Cursor(Cursor.HAND_CURSOR));
+
+        final boolean[] loggedIn = {false};
+
+        loginBtn.addActionListener(e -> {
+            String user = userField.getText().trim();
+            String pass = new String(passField.getPassword());
+            if (DatabaseManager.loginUser(user, pass)) {
+                loggedIn[0] = true;
+                loggedInUser = user;
+                dialog.dispose();
+            } else {
+                msgLabel.setText("Invalid username or password.");
+                msgLabel.setForeground(new Color(239, 68, 68));
+            }
+        });
+
+        registerBtn.addActionListener(e -> {
+            String user = userField.getText().trim();
+            String pass = new String(passField.getPassword());
+            if (user.isEmpty() || pass.isEmpty()) {
+                msgLabel.setText("Username and password cannot be empty.");
+                msgLabel.setForeground(new Color(239, 68, 68));
+                return;
+            }
+            if (DatabaseManager.registerUser(user, pass)) {
+                msgLabel.setText("Registration successful! Click Login.");
+                msgLabel.setForeground(new Color(16, 185, 129));
+            } else {
+                msgLabel.setText("Username already exists.");
+                msgLabel.setForeground(new Color(239, 68, 68));
+            }
+        });
+
+        exitBtn.addActionListener(e -> {
+            System.exit(0);
+        });
+
+        btnPanel.add(exitBtn);
+        btnPanel.add(registerBtn);
+        btnPanel.add(loginBtn);
+
+        gbc.gridy = 4;
+        panel.add(btnPanel, gbc);
+
+        dialog.add(panel);
+        dialog.pack();
+        dialog.setLocationRelativeTo(null);
+        dialog.setVisible(true);
+
+        return loggedIn[0];
     }
 
     public static void main(String[] args) {
         System.out.println("[Main] Starting Whiteboard Client...");
 
         SwingUtilities.invokeLater(() -> {
-
             try {
                 UIManager.setLookAndFeel(
                     UIManager.getSystemLookAndFeelClassName());
             } catch (Exception e) {
                 System.err.println("[Client] Could not set look and feel: "
                     + e.getMessage());
+            }
+
+            // Display styled login dialog first
+            if (!showLoginDialog(null)) {
+                System.out.println("[Client] Login canceled. Exiting.");
+                System.exit(0);
             }
 
             WhiteboardClient client = new WhiteboardClient();

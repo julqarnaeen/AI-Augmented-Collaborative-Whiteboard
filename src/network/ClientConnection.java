@@ -3,7 +3,7 @@ package network;
 import java.io.*;
 import java.net.Socket;
 
-public class Connection {
+public class ClientConnection {
 
     private Socket socket;
 
@@ -15,7 +15,7 @@ public class Connection {
 
     private volatile boolean connected;
 
-    public Connection(Socket socket, String clientId) throws IOException {
+    public ClientConnection(Socket socket, String clientId) throws IOException {
         this.socket = socket;
         this.clientId = clientId;
 
@@ -29,7 +29,7 @@ public class Connection {
 
         this.connected = true;
 
-        System.out.println("[Connection] Connection established for " + clientId
+        System.out.println("[ClientConnection] Connection established for " + clientId
             + " from " + socket.getInetAddress().getHostAddress()
             + ":" + socket.getPort());
     }
@@ -40,7 +40,7 @@ public class Connection {
             outputWriter.println(message);
 
             if (outputWriter.checkError()) {
-                System.err.println("[Connection] Error sending message to " + clientId);
+                System.err.println("[ClientConnection] Error sending message to " + clientId);
                 connected = false;
             }
         }
@@ -66,14 +66,14 @@ public class Connection {
         }
 
         connected = false;
-        System.out.println("[Connection] Closing connection for " + clientId);
+        System.out.println("[ClientConnection] Closing connection for " + clientId);
 
         try {
             if (inputReader != null) {
                 inputReader.close();
             }
         } catch (IOException e) {
-            System.err.println("[Connection] Error closing input stream for "
+            System.err.println("[ClientConnection] Error closing input stream for "
                 + clientId + ": " + e.getMessage());
         }
 
@@ -86,11 +86,11 @@ public class Connection {
                 socket.close();
             }
         } catch (IOException e) {
-            System.err.println("[Connection] Error closing socket for "
+            System.err.println("[ClientConnection] Error closing socket for "
                 + clientId + ": " + e.getMessage());
         }
 
-        System.out.println("[Connection] Connection closed for " + clientId);
+        System.out.println("[ClientConnection] Connection closed for " + clientId);
     }
 
     public String getClientId() {

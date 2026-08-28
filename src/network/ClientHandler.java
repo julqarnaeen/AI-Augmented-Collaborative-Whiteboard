@@ -2,24 +2,22 @@ package network;
 
 import java.io.IOException;
 import java.net.Socket;
+import com.google.gson.Gson;
 
 public class ClientHandler extends Thread {
 
-    private Connection connection;
+    private ClientConnection connection;
 
     private WhiteboardServer server;
 
-    private Socket clientSocket;
+    private final Gson gson;
 
     public ClientHandler(Socket socket, WhiteboardServer server, String clientId)
             throws IOException {
 
-        this.clientSocket = socket;
-
         this.server = server;
-
-        this.connection = new Connection(socket, clientId);
-
+        this.connection = new ClientConnection(socket, clientId);
+        this.gson = new Gson();
         this.setName("ClientHandler-" + clientId);
 
         System.out.println("[ClientHandler] Handler created for " + clientId);
@@ -31,14 +29,20 @@ public class ClientHandler extends Thread {
             + connection.getClientId()
             + " | Thread: " + Thread.currentThread().getName());
 
-        connection.sendMessage("WELCOME:" + connection.getClientId());
+        // Send WELCOME message as JSON
+        NetworkMessage welcome = new NetworkMessage("WELCOME");
+        welcome.setSenderId(connection.getClientId());
+        connection.sendMessage(gson.toJson(welcome));
+
+        // Stream all historical drawing actions from SQLite database
+        java.util.List<String> history = DatabaseManager.getAllDrawings();
+        for (String actionJson : history) {
+            connection.sendMessage(actionJson);
+        }
 
         try {
-
             String receivedMessage;
-
             while ((receivedMessage = connection.receiveMessage()) != null) {
-
                 System.out.println("[ClientHandler] Received from "
                     + connection.getClientId() + ": " + receivedMessage);
 
@@ -49,14 +53,11 @@ public class ClientHandler extends Thread {
                 + " disconnected (end of stream).");
 
         } catch (IOException e) {
-
             System.err.println("[ClientHandler] Connection error with "
                 + connection.getClientId() + ": " + e.getMessage());
 
         } finally {
-
             server.removeClient(this);
-
             connection.close();
 
             System.out.println("[ClientHandler] Handler thread ended for "
@@ -65,58 +66,95 @@ public class ClientHandler extends Thread {
     }
 
     private void handleMessage(String message) {
-
         if (message == null || message.trim().isEmpty()) {
             return;
         }
 
-        String messageType;
-        if (message.contains(":")) {
-            messageType = message.substring(0, message.indexOf(":")).toUpperCase();
-        } else {
-            messageType = message.toUpperCase();
-        }
+        try {
+            NetworkMessage msg = gson.fromJson(message, NetworkMessage.class);
+            if (msg == null || msg.getType() == null) {
+                return;
+            }
 
-        switch (messageType) {
+            String messageType = msg.getType().toUpperCase();
 
-            case "DISCONNECT":
-
+            if ("DISCONNECT".equals(messageType)) {
                 System.out.println("[ClientHandler] " + connection.getClientId()
                     + " requested disconnect.");
 
-                server.broadcastMessage(
-                    "USER_LEFT:" + connection.getClientId(), this);
+                NetworkMessage leaveMsg = new NetworkMessage("USER_LEFT");
+                leaveMsg.setSenderId(connection.getClientId());
+                server.broadcastMessage(gson.toJson(leaveMsg), this);
 
                 connection.close();
-                break;
+            } else if ("CHAT_MESSAGE".equals(messageType)) {
+                // Moderate chat message using ContentModerator
+                String rawText = msg.getText();
+                String moderated = ContentModerator.moderateText(rawText);
+                msg.setText(moderated);
+                // Retain client-submitted username senderId
+                server.broadcastMessage(gson.toJson(msg), null);
+            } else if ("SAVE_BOARD".equals(messageType)) {
+                String username = msg.getSenderId();
+                String boardName = msg.getText();
+                String jsonData = msg.getJsonData();
+                DatabaseManager.saveBoard(username, boardName, jsonData);
+                System.out.println("[Server] Saved board '" + boardName + "' for user '" + username + "'");
+            } else if ("LOAD_BOARD".equals(messageType)) {
+                String username = msg.getSenderId();
+                String boardName = msg.getText();
+                String boardData = DatabaseManager.loadBoard(username, boardName);
+                if (boardData != null) {
+                    DatabaseManager.clearDrawings();
+                    String[] actions = gson.fromJson(boardData, String[].class);
+                    for (String actionJson : actions) {
+                        try {
+                            NetworkMessage actionMsg = gson.fromJson(actionJson, NetworkMessage.class);
+                            DatabaseManager.saveAction(actionMsg.getType(), actionJson);
+                        } catch (Exception ex) {
+                            System.err.println("[Server] Error restoring drawing: " + ex.getMessage());
+                        }
+                    }
+                    NetworkMessage stateMsg = new NetworkMessage("LOAD_BOARD_STATE");
+                    stateMsg.setJsonData(boardData);
+                    server.broadcastMessage(gson.toJson(stateMsg), null);
+                    System.out.println("[Server] Loaded board '" + boardName + "' for user '" + username + "' and synced all clients.");
+                }
+            } else if ("GET_BOARDS".equals(messageType)) {
+                String username = msg.getSenderId();
+                java.util.List<String> boards = DatabaseManager.getSavedBoards(username);
+                NetworkMessage resp = new NetworkMessage("BOARD_LIST");
+                resp.setJsonData(gson.toJson(boards));
+                connection.sendMessage(gson.toJson(resp));
+            } else if ("BLOCK_SLANG".equals(messageType)) {
+                String targetWord = msg.getText().trim().toLowerCase();
+                DatabaseManager.addBlockedSlang(targetWord);
+                ContentModerator.addBlockedWord(targetWord);
+                
+                msg.setSenderId(connection.getClientId());
+                server.broadcastMessage(gson.toJson(msg), this);
+            } else {
+                // Set sender ID
+                msg.setSenderId(connection.getClientId());
+                String jsonToSend = gson.toJson(msg);
 
-            case "DRAW_START":
-            case "DRAW_POINT":
-            case "DRAW_LINE":
-            case "DRAW_RECT":
-            case "DRAW_CIRCLE":
-            case "DRAW_TRI":
-            case "DRAW_END":
-            case "TEXT":
-            case "MOVE_TEXT":
-            case "BLOCK_SLANG":
-            case "CLEAR_CANVAS":
-            case "COLOR":
-            case "STROKE_WIDTH":
+                // Persist drawing action to SQLite
+                if ("CLEAR_CANVAS".equals(messageType)) {
+                    DatabaseManager.clearDrawings();
+                } else if ("UNDO".equals(messageType)) {
+                    DatabaseManager.removeLastAction();
+                } else if (!"DRAW_START".equals(messageType) && !"DRAW_END".equals(messageType)) {
+                    DatabaseManager.saveAction(messageType, jsonToSend);
+                }
 
-                String broadcastMessage = "FROM:" + connection.getClientId()
-                    + "|" + message;
-
-                server.broadcastMessage(broadcastMessage, this);
-                break;
-
-            default:
-
-                System.out.println("[ClientHandler] Unknown message type from "
-                    + connection.getClientId() + ": " + message);
-
-                connection.sendMessage("ERROR:Unknown message type: " + messageType);
-                break;
+                // Broadcast JSON message
+                server.broadcastMessage(jsonToSend, this);
+            }
+        } catch (Exception e) {
+            System.err.println("[ClientHandler] Error parsing message: " + e.getMessage());
+            NetworkMessage errMsg = new NetworkMessage("ERROR");
+            errMsg.setText("Invalid JSON message format");
+            connection.sendMessage(gson.toJson(errMsg));
         }
     }
 
@@ -124,7 +162,7 @@ public class ClientHandler extends Thread {
         connection.sendMessage(message);
     }
 
-    public Connection getConnection() {
+    public ClientConnection getConnection() {
         return connection;
     }
 

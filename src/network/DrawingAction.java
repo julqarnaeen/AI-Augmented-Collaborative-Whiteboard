@@ -2,24 +2,14 @@ package network;
 
 import java.awt.Color;
 import java.util.List;
+import com.google.gson.Gson;
 
 /**
  * A unified action model that wraps every discrete user action on the
  * whiteboard canvas.  Instances are immutable after construction.
- *
- * <p>Each {@code DrawingAction} carries a {@link Type}, the originating
- * client ID, a millisecond timestamp, and type-specific payload fields
- * (stroke, text element, move coordinates, or free-form extra data).
- *
- * <p>The class provides {@link #toMessage()} and
- * {@link #fromMessage(String, String)} for round-tripping through the
- * existing wire protocol.
  */
 public class DrawingAction {
 
-    // ------------------------------------------------------------------ enum
-
-    /** Every kind of discrete user action the whiteboard supports. */
     public enum Type {
         STROKE,
         TEXT,
@@ -28,8 +18,6 @@ public class DrawingAction {
         UNDO,
         BLOCK_SLANG
     }
-
-    // ---------------------------------------------------------------- fields
 
     private final Type type;
     private final String clientId;
@@ -50,12 +38,6 @@ public class DrawingAction {
     /** Free-form payload, e.g. the blocked word for {@code BLOCK_SLANG}. */
     private final String extraData;
 
-    // ---------------------------------------------------------- constructors
-
-    /**
-     * Creates an action that carries no extra payload.
-     * Suitable for {@link Type#CLEAR_CANVAS} and {@link Type#UNDO}.
-     */
     public DrawingAction(Type type, String clientId) {
         this.type = type;
         this.clientId = clientId;
@@ -69,9 +51,6 @@ public class DrawingAction {
         this.extraData = null;
     }
 
-    /**
-     * Creates a STROKE action wrapping the given stroke data.
-     */
     public DrawingAction(Type type, String clientId, WhiteboardPanel.Stroke stroke) {
         this.type = type;
         this.clientId = clientId;
@@ -85,9 +64,6 @@ public class DrawingAction {
         this.extraData = null;
     }
 
-    /**
-     * Creates a TEXT action wrapping the given text element.
-     */
     public DrawingAction(Type type, String clientId, WhiteboardPanel.TextElement textElement) {
         this.type = type;
         this.clientId = clientId;
@@ -101,9 +77,6 @@ public class DrawingAction {
         this.extraData = null;
     }
 
-    /**
-     * Creates a MOVE_TEXT action with old and new coordinates.
-     */
     public DrawingAction(Type type, String clientId, int oldX, int oldY, int newX, int newY) {
         this.type = type;
         this.clientId = clientId;
@@ -117,10 +90,6 @@ public class DrawingAction {
         this.extraData = null;
     }
 
-    /**
-     * Creates an action carrying a free-form string payload.
-     * Suitable for {@link Type#BLOCK_SLANG}.
-     */
     public DrawingAction(Type type, String clientId, String extraData) {
         this.type = type;
         this.clientId = clientId;
@@ -133,8 +102,6 @@ public class DrawingAction {
         this.newY = 0;
         this.extraData = extraData;
     }
-
-    // --------------------------------------------------------------- getters
 
     public Type getType() {
         return type;
@@ -176,147 +143,143 @@ public class DrawingAction {
         return extraData;
     }
 
-    // --------------------------------------------------------- serialization
-
     /**
-     * Serializes this action into the existing wire-protocol format.
-     *
-     * <p>For {@code STROKE} actions with {@code ShapeType.FREEHAND}, this
-     * returns the first {@code DRAW_LINE} segment only (freehand strokes
-     * are sent as multiple individual messages during drag).  For normalized
-     * shapes it returns the single corresponding message.
-     *
-     * @return a protocol string ready to send over the connection,
-     *         or {@code null} if the action cannot be serialized
+     * Serializes this action into a JSON string using NetworkMessage.
      */
     public String toMessage() {
+        Gson gson = new Gson();
+        NetworkMessage msg = new NetworkMessage();
+        msg.setType(type.name());
+        msg.setSenderId(clientId);
+
         switch (type) {
             case STROKE:
-                return strokeToMessage();
+                if (stroke == null) return null;
+                msg.setStrokeWidth(stroke.getStrokeWidth());
+                msg.setColorRgb(stroke.getColor().getRGB());
+                
+                if (stroke.getType() == WhiteboardPanel.Stroke.ShapeType.FREEHAND) {
+                    List<WhiteboardPanel.DrawPoint> pts = stroke.getPoints();
+                    if (pts != null && pts.size() >= 2) {
+                        WhiteboardPanel.DrawPoint p1 = pts.get(0);
+                        WhiteboardPanel.DrawPoint p2 = pts.get(1);
+                        msg.setType("DRAW_LINE");
+                        msg.setX1(p1.x);
+                        msg.setY1(p1.y);
+                        msg.setX2(p2.x);
+                        msg.setY2(p2.y);
+                    } else {
+                        return null;
+                    }
+                } else {
+                    if (stroke.getType() == WhiteboardPanel.Stroke.ShapeType.LINE) msg.setType("DRAW_LINE");
+                    else if (stroke.getType() == WhiteboardPanel.Stroke.ShapeType.RECTANGLE) msg.setType("DRAW_RECT");
+                    else if (stroke.getType() == WhiteboardPanel.Stroke.ShapeType.CIRCLE) msg.setType("DRAW_CIRCLE");
+                    else if (stroke.getType() == WhiteboardPanel.Stroke.ShapeType.TRIANGLE) msg.setType("DRAW_TRI");
+                    
+                    msg.setX1(stroke.getX1());
+                    msg.setY1(stroke.getY1());
+                    msg.setX2(stroke.getX2()); // w is serialized to x2
+                    msg.setY2(stroke.getY2()); // h is serialized to y2
+                }
+                break;
 
             case TEXT:
                 if (textElement == null) return null;
-                return "TEXT:" + textElement.getX() + "," + textElement.getY()
-                    + "," + textElement.getColor().getRGB()
-                    + "," + textElement.getFontSize()
-                    + "," + textElement.getText();
+                msg.setX1(textElement.getX());
+                msg.setY1(textElement.getY());
+                msg.setColorRgb(textElement.getColor().getRGB());
+                msg.setFontSize(textElement.getFontSize());
+                msg.setText(textElement.getText());
+                break;
 
             case MOVE_TEXT:
-                return "MOVE_TEXT:" + oldX + "," + oldY + "," + newX + "," + newY;
+                msg.setX1(oldX);
+                msg.setY1(oldY);
+                msg.setX2(newX);
+                msg.setY2(newY);
+                break;
 
             case CLEAR_CANVAS:
-                return "CLEAR_CANVAS:";
-
             case UNDO:
-                return "UNDO:";
+                break;
 
             case BLOCK_SLANG:
-                return "BLOCK_SLANG:" + (extraData != null ? extraData : "");
+                msg.setText(extraData);
+                break;
 
             default:
-                System.err.println("[DrawingAction] Unknown type in toMessage: " + type);
                 return null;
         }
+
+        return gson.toJson(msg);
     }
 
     /**
-     * Converts a stroke action into the appropriate wire-protocol message
-     * based on its {@link WhiteboardPanel.Stroke.ShapeType}.
+     * Parses a JSON message into a DrawingAction.
      */
-    private String strokeToMessage() {
-        if (stroke == null) return null;
-
-        WhiteboardPanel.Stroke.ShapeType shapeType = stroke.getType();
-        int rgb = stroke.getColor().getRGB();
-        int sw = stroke.getStrokeWidth();
-
-        switch (shapeType) {
-            case LINE:
-                return "DRAW_LINE:" + stroke.getX1() + "," + stroke.getY1()
-                    + "," + stroke.getX2() + "," + stroke.getY2()
-                    + "," + rgb + "," + sw;
-
-            case RECTANGLE:
-                return "DRAW_RECT:" + stroke.getX1() + "," + stroke.getY1()
-                    + "," + stroke.getX2() + "," + stroke.getY2()
-                    + "," + rgb + "," + sw;
-
-            case CIRCLE:
-                return "DRAW_CIRCLE:" + stroke.getX1() + "," + stroke.getY1()
-                    + "," + stroke.getX2() + "," + stroke.getY2()
-                    + "," + rgb + "," + sw;
-
-            case TRIANGLE:
-                return "DRAW_TRI:" + stroke.getX1() + "," + stroke.getY1()
-                    + "," + stroke.getX2() + "," + stroke.getY2()
-                    + "," + rgb + "," + sw;
-
-            case FREEHAND:
-            default:
-                // Freehand strokes with at least 2 points: return the first segment
-                List<WhiteboardPanel.DrawPoint> pts = stroke.getPoints();
-                if (pts != null && pts.size() >= 2) {
-                    WhiteboardPanel.DrawPoint p1 = pts.get(0);
-                    WhiteboardPanel.DrawPoint p2 = pts.get(1);
-                    return "DRAW_LINE:" + p1.x + "," + p1.y
-                        + "," + p2.x + "," + p2.y
-                        + "," + rgb + "," + sw;
-                }
-                return null;
-        }
-    }
-
-    // -------------------------------------------------------- deserialization
-
-    /**
-     * Parses a wire-protocol message string into a {@code DrawingAction}.
-     *
-     * <p>The {@code message} parameter should be the action portion of the
-     * protocol string (i.e., <em>without</em> the {@code FROM:sender|}
-     * prefix — that is stripped by the caller).
-     *
-     * @param message  the protocol message to parse
-     * @param clientId the ID of the client that sent the message
-     * @return a new {@code DrawingAction}, or {@code null} if the message
-     *         is unrecognized or malformed
-     */
-    public static DrawingAction fromMessage(String message, String clientId) {
-        if (message == null || message.isEmpty()) {
+    public static DrawingAction fromMessage(String jsonMessage, String clientId) {
+        if (jsonMessage == null || jsonMessage.isEmpty()) {
             return null;
         }
 
-        String messageType;
-        String messageData = "";
-        if (message.contains(":")) {
-            int colonIndex = message.indexOf(":");
-            messageType = message.substring(0, colonIndex).toUpperCase();
-            messageData = message.substring(colonIndex + 1);
-        } else {
-            messageType = message.toUpperCase();
-        }
-
+        Gson gson = new Gson();
         try {
-            switch (messageType) {
-                case "DRAW_LINE":
-                    return parseDrawLine(messageData, clientId);
+            NetworkMessage msg = gson.fromJson(jsonMessage, NetworkMessage.class);
+            if (msg == null || msg.getType() == null) {
+                return null;
+            }
+
+            String type = msg.getType().toUpperCase();
+
+            switch (type) {
+                case "DRAW_LINE": {
+                    int x1 = msg.getX1();
+                    int y1 = msg.getY1();
+                    int x2 = msg.getX2();
+                    int y2 = msg.getY2();
+                    Color color = new Color(msg.getColorRgb());
+                    int sw = msg.getStrokeWidth();
+                    WhiteboardPanel.Stroke stroke = new WhiteboardPanel.Stroke(color, sw);
+                    stroke.addPoint(x1, y1);
+                    stroke.addPoint(x2, y2);
+                    return new DrawingAction(Type.STROKE, clientId, stroke);
+                }
 
                 case "DRAW_RECT":
-                    return parseDrawShape(messageData, clientId,
-                        WhiteboardPanel.Stroke.ShapeType.RECTANGLE);
-
                 case "DRAW_CIRCLE":
-                    return parseDrawShape(messageData, clientId,
-                        WhiteboardPanel.Stroke.ShapeType.CIRCLE);
+                case "DRAW_TRI": {
+                    int x = msg.getX1();
+                    int y = msg.getY1();
+                    int w = msg.getX2();
+                    int h = msg.getY2();
+                    Color color = new Color(msg.getColorRgb());
+                    int sw = msg.getStrokeWidth();
+                    WhiteboardPanel.Stroke.ShapeType shapeType = WhiteboardPanel.Stroke.ShapeType.RECTANGLE;
+                    if ("DRAW_CIRCLE".equals(type)) shapeType = WhiteboardPanel.Stroke.ShapeType.CIRCLE;
+                    else if ("DRAW_TRI".equals(type)) shapeType = WhiteboardPanel.Stroke.ShapeType.TRIANGLE;
 
-                case "DRAW_TRI":
-                    return parseDrawShape(messageData, clientId,
-                        WhiteboardPanel.Stroke.ShapeType.TRIANGLE);
+                    WhiteboardPanel.Stroke stroke = new WhiteboardPanel.Stroke(color, sw, shapeType, x, y, w, h);
+                    return new DrawingAction(Type.STROKE, clientId, stroke);
+                }
 
-                case "TEXT":
-                    return parseText(messageData, clientId);
+                case "TEXT": {
+                    int x = msg.getX1();
+                    int y = msg.getY1();
+                    Color color = new Color(msg.getColorRgb());
+                    int fontSize = msg.getFontSize();
+                    String text = msg.getText();
+                    WhiteboardPanel.TextElement te = new WhiteboardPanel.TextElement(text, x, y, color, fontSize);
+                    return new DrawingAction(Type.TEXT, clientId, te);
+                }
 
-                case "MOVE_TEXT":
-                    return parseMoveText(messageData, clientId);
+                case "MOVE_TEXT": {
+                    int oldX = msg.getX1();
+                    int oldY = msg.getY1();
+                    int newX = msg.getX2();
+                    int newY = msg.getY2();
+                    return new DrawingAction(Type.MOVE_TEXT, clientId, oldX, oldY, newX, newY);
+                }
 
                 case "CLEAR_CANVAS":
                     return new DrawingAction(Type.CLEAR_CANVAS, clientId);
@@ -325,115 +288,16 @@ public class DrawingAction {
                     return new DrawingAction(Type.UNDO, clientId);
 
                 case "BLOCK_SLANG":
-                    return new DrawingAction(Type.BLOCK_SLANG, clientId, messageData);
-
-                case "DRAW_START":
-                case "DRAW_END":
-                    // These are framing messages — no action needed
-                    return null;
+                    return new DrawingAction(Type.BLOCK_SLANG, clientId, msg.getText());
 
                 default:
-                    System.out.println("[DrawingAction] Unknown message type: " + messageType);
                     return null;
             }
-        } catch (NumberFormatException e) {
-            System.err.println("[DrawingAction] Error parsing message '" + message
-                + "': " + e.getMessage());
+        } catch (Exception e) {
+            System.err.println("[DrawingAction] Error parsing message: " + e.getMessage());
             return null;
         }
     }
-
-    /**
-     * Parses a DRAW_LINE message into a STROKE action with a two-point
-     * freehand stroke.
-     */
-    private static DrawingAction parseDrawLine(String data, String clientId) {
-        String[] parts = data.split(",");
-        if (parts.length < 4) return null;
-
-        int x1 = Integer.parseInt(parts[0].trim());
-        int y1 = Integer.parseInt(parts[1].trim());
-        int x2 = Integer.parseInt(parts[2].trim());
-        int y2 = Integer.parseInt(parts[3].trim());
-
-        Color color = Color.BLACK;
-        int strokeWidth = 3;
-        if (parts.length >= 6) {
-            color = new Color(Integer.parseInt(parts[4].trim()));
-            strokeWidth = Integer.parseInt(parts[5].trim());
-        }
-
-        WhiteboardPanel.Stroke stroke = new WhiteboardPanel.Stroke(color, strokeWidth);
-        stroke.addPoint(x1, y1);
-        stroke.addPoint(x2, y2);
-
-        return new DrawingAction(Type.STROKE, clientId, stroke);
-    }
-
-    /**
-     * Parses a DRAW_RECT, DRAW_CIRCLE, or DRAW_TRI message into a STROKE
-     * action with the appropriate shape type.
-     */
-    private static DrawingAction parseDrawShape(String data, String clientId,
-                                                 WhiteboardPanel.Stroke.ShapeType shapeType) {
-        String[] parts = data.split(",");
-        if (parts.length < 6) return null;
-
-        int x = Integer.parseInt(parts[0].trim());
-        int y = Integer.parseInt(parts[1].trim());
-        int w = Integer.parseInt(parts[2].trim());
-        int h = Integer.parseInt(parts[3].trim());
-        Color color = new Color(Integer.parseInt(parts[4].trim()));
-        int strokeWidth = Integer.parseInt(parts[5].trim());
-
-        WhiteboardPanel.Stroke stroke = new WhiteboardPanel.Stroke(
-            color, strokeWidth, shapeType, x, y, w, h);
-
-        return new DrawingAction(Type.STROKE, clientId, stroke);
-    }
-
-    /**
-     * Parses a TEXT message into a TEXT action with a TextElement.
-     */
-    private static DrawingAction parseText(String data, String clientId) {
-        String[] parts = data.split(",", 5);
-        if (parts.length < 4) return null;
-
-        int x = Integer.parseInt(parts[0].trim());
-        int y = Integer.parseInt(parts[1].trim());
-        Color color = new Color(Integer.parseInt(parts[2].trim()));
-
-        int fontSize = 20;
-        String content;
-        if (parts.length == 5) {
-            fontSize = Integer.parseInt(parts[3].trim());
-            content = parts[4];
-        } else {
-            content = parts[3];
-        }
-
-        WhiteboardPanel.TextElement te = new WhiteboardPanel.TextElement(
-            content, x, y, color, fontSize);
-
-        return new DrawingAction(Type.TEXT, clientId, te);
-    }
-
-    /**
-     * Parses a MOVE_TEXT message into a MOVE_TEXT action.
-     */
-    private static DrawingAction parseMoveText(String data, String clientId) {
-        String[] parts = data.split(",");
-        if (parts.length < 4) return null;
-
-        int oX = Integer.parseInt(parts[0].trim());
-        int oY = Integer.parseInt(parts[1].trim());
-        int nX = Integer.parseInt(parts[2].trim());
-        int nY = Integer.parseInt(parts[3].trim());
-
-        return new DrawingAction(Type.MOVE_TEXT, clientId, oX, oY, nX, nY);
-    }
-
-    // -------------------------------------------------------------- toString
 
     @Override
     public String toString() {

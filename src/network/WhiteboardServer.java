@@ -1,10 +1,11 @@
 package network;
 
+import java.io.BufferedReader;
 import java.io.IOException;
+import java.io.InputStreamReader;
 import java.net.ServerSocket;
 import java.net.Socket;
-import java.util.List;
-import java.util.concurrent.CopyOnWriteArrayList;
+import com.google.gson.Gson;
 
 public class WhiteboardServer {
 
@@ -12,21 +13,39 @@ public class WhiteboardServer {
 
     private ServerSocket serverSocket;
 
-    private List<ClientHandler> activeClients;
+    private ConnectionManager connectionManager;
 
     private int clientCounter;
 
     private volatile boolean running;
 
+    private Process pythonProcess;
+
+    private final Gson gson;
+
     public WhiteboardServer() {
-        this.activeClients = new CopyOnWriteArrayList<>();
+        this.connectionManager = new ConnectionManager();
         this.clientCounter = 0;
         this.running = false;
+        this.gson = new Gson();
     }
 
     public void start() {
-        try {
+        // Start the Python AI Microservice automatically
+        startPythonService();
 
+        // Load and register persistent blocked slangs from SQLite database
+        try {
+            java.util.List<String> persistedSlangs = DatabaseManager.getAllBlockedSlangs();
+            for (String slang : persistedSlangs) {
+                ContentModerator.addBlockedWord(slang);
+            }
+            System.out.println("[Server] Loaded " + persistedSlangs.size() + " persistent blocked slangs from SQLite DB.");
+        } catch (Exception e) {
+            System.err.println("[Server] Error loading persisted slangs: " + e.getMessage());
+        }
+
+        try {
             serverSocket = new ServerSocket(SERVER_PORT);
             running = true;
 
@@ -39,7 +58,6 @@ public class WhiteboardServer {
             System.out.println();
 
             while (running) {
-
                 System.out.println("[Server] Waiting for a new client connection...");
                 Socket clientSocket = serverSocket.accept();
 
@@ -53,25 +71,23 @@ public class WhiteboardServer {
                     + ":" + clientSocket.getPort());
 
                 try {
-
                     ClientHandler handler = new ClientHandler(
                         clientSocket, this, clientId
                     );
 
-                    activeClients.add(handler);
-
+                    connectionManager.addClient(handler);
                     handler.start();
 
-                    System.out.println("[Server] ClientHandler thread started for "
-                        + clientId);
-                    System.out.println("[Server] Total active clients: "
-                        + activeClients.size());
+                    System.out.println("[Server] ClientHandler thread started for " + clientId);
+                    System.out.println("[Server] Total active clients: " + connectionManager.getActiveClientCount());
                     System.out.println();
 
-                    broadcastMessage("USER_JOINED:" + clientId, handler);
+                    // Send USER_JOINED system message to others
+                    NetworkMessage joinMsg = new NetworkMessage("USER_JOINED");
+                    joinMsg.setSenderId(clientId);
+                    broadcastMessage(gson.toJson(joinMsg), handler);
 
                 } catch (IOException e) {
-
                     System.err.println("[Server] Error creating handler for "
                         + clientId + ": " + e.getMessage());
                     clientSocket.close();
@@ -79,75 +95,97 @@ public class WhiteboardServer {
             }
 
         } catch (IOException e) {
-
             if (running) {
                 System.err.println("[Server] Server error: " + e.getMessage());
                 e.printStackTrace();
             } else {
                 System.out.println("[Server] Server stopped.");
             }
-
         } finally {
-
             stop();
         }
     }
 
-    public void broadcastMessage(String message, ClientHandler sender) {
-        System.out.println("[Server] Broadcasting: " + message);
-
-        for (ClientHandler client : activeClients) {
-
-            if (client != sender && client.isClientConnected()) {
-                client.sendToClient(message);
-            }
-        }
+    public void broadcastMessage(String jsonMessage, ClientHandler sender) {
+        connectionManager.broadcastToOthers(jsonMessage, sender);
     }
 
-    public void broadcastToAll(String message) {
-        System.out.println("[Server] Broadcasting to all: " + message);
-
-        for (ClientHandler client : activeClients) {
-            if (client.isClientConnected()) {
-                client.sendToClient(message);
-            }
-        }
+    public void broadcastToAll(String jsonMessage) {
+        connectionManager.broadcastToAll(jsonMessage);
     }
 
     public void removeClient(ClientHandler handler) {
-        activeClients.remove(handler);
+        connectionManager.removeClient(handler);
 
         System.out.println("[Server] Client removed: " + handler.getClientId());
-        System.out.println("[Server] Remaining active clients: "
-            + activeClients.size());
+        System.out.println("[Server] Remaining active clients: " + connectionManager.getActiveClientCount());
 
-        broadcastToAll("USER_LEFT:" + handler.getClientId());
+        // Send USER_LEFT system message
+        NetworkMessage leaveMsg = new NetworkMessage("USER_LEFT");
+        leaveMsg.setSenderId(handler.getClientId());
+        broadcastToAll(gson.toJson(leaveMsg));
     }
 
     public int getActiveClientCount() {
-        return activeClients.size();
+        return connectionManager.getActiveClientCount();
     }
 
     public void stop() {
         running = false;
         System.out.println("[Server] Shutting down server...");
 
-        for (ClientHandler client : activeClients) {
-            client.sendToClient("SERVER_SHUTDOWN:Server is shutting down");
-            client.getConnection().close();
-        }
-        activeClients.clear();
+        // Send SERVER_SHUTDOWN system message
+        NetworkMessage shutdownMsg = new NetworkMessage("SERVER_SHUTDOWN");
+        shutdownMsg.setText("Server is shutting down");
+        broadcastToAll(gson.toJson(shutdownMsg));
+
+        connectionManager.closeAll();
 
         try {
             if (serverSocket != null && !serverSocket.isClosed()) {
                 serverSocket.close();
             }
         } catch (IOException e) {
-            System.err.println("[Server] Error closing server socket: "
-                + e.getMessage());
+            System.err.println("[Server] Error closing server socket: " + e.getMessage());
         }
 
+        stopPythonService();
+
         System.out.println("[Server] Server stopped.");
+    }
+
+    private void startPythonService() {
+        new Thread(() -> {
+            try {
+                System.out.println("[Server] Starting Python AI Microservice process...");
+                ProcessBuilder pb = new ProcessBuilder("python", "src/network/ai_service.py");
+                pb.redirectErrorStream(true);
+                pythonProcess = pb.start();
+
+                try (BufferedReader reader = new BufferedReader(new InputStreamReader(pythonProcess.getInputStream()))) {
+                    String line;
+                    while ((line = reader.readLine()) != null) {
+                        System.out.println("[AI Service] " + line);
+                    }
+                }
+            } catch (IOException e) {
+                System.err.println("[Server] Failed to run Python AI microservice: " + e.getMessage());
+                System.err.println("[Server] Please make sure python and requirements are installed.");
+            }
+        }, "PythonAIServiceRunner").start();
+    }
+
+    private void stopPythonService() {
+        if (pythonProcess != null) {
+            System.out.println("[Server] Terminating Python AI process...");
+            pythonProcess.destroy();
+            try {
+                pythonProcess.waitFor();
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+            }
+            System.out.println("[Server] Python AI process terminated.");
+        }
     }
 
     public static void main(String[] args) {
