@@ -765,6 +765,14 @@ public class WhiteboardClient {
                 case "CLEAR_CANVAS":
                 case "UNDO":
                 case "BLOCK_SLANG":
+                case "DRAW_START":
+                case "DRAW_LINE":
+                case "DRAW_END":
+                case "DRAW_RECT":
+                case "DRAW_CIRCLE":
+                case "DRAW_TRI":
+                case "TEXT":
+                case "MOVE_TEXT":
                     handleBroadcastMessage(msg);
                     break;
 
@@ -784,16 +792,36 @@ public class WhiteboardClient {
             String actionType = msg.getType().toUpperCase();
 
             switch (actionType) {
+                case "DRAW_START": {
+                    String sender = msg.getSenderId();
+                    int x = msg.getX1() != null ? msg.getX1() : 0;
+                    int y = msg.getY1() != null ? msg.getY1() : 0;
+                    Color col = msg.getColorRgb() != null ? new Color(msg.getColorRgb()) : Color.BLACK;
+                    int w = msg.getStrokeWidth() != null ? msg.getStrokeWidth() : 3;
+                    whiteboardPanel.startRemoteStroke(sender, msg.getStrokeId(), x, y, col, w);
+                    break;
+                }
+
                 case "DRAW_LINE": {
-                    int x1 = msg.getX1();
-                    int y1 = msg.getY1();
-                    int x2 = msg.getX2();
-                    int y2 = msg.getY2();
-                    Color col = Color.BLACK;
-                    int w = 3;
-                    if (msg.getColorRgb() != null) col = new Color(msg.getColorRgb());
-                    if (msg.getStrokeWidth() != null) w = msg.getStrokeWidth();
-                    whiteboardPanel.addRemoteLine(x1, y1, x2, y2, col, w);
+                    String sender = msg.getSenderId();
+                    int x1 = msg.getX1() != null ? msg.getX1() : 0;
+                    int y1 = msg.getY1() != null ? msg.getY1() : 0;
+                    int x2 = msg.getX2() != null ? msg.getX2() : x1;
+                    int y2 = msg.getY2() != null ? msg.getY2() : y1;
+                    Color col = msg.getColorRgb() != null ? new Color(msg.getColorRgb()) : Color.BLACK;
+                    int w = msg.getStrokeWidth() != null ? msg.getStrokeWidth() : 3;
+
+                    if (sender != null && whiteboardPanel.hasActiveRemoteStroke(sender)) {
+                        whiteboardPanel.appendRemoteStrokePoint(sender, x2, y2);
+                    } else {
+                        whiteboardPanel.addRemoteLine(msg.getStrokeId(), x1, y1, x2, y2, col, w);
+                    }
+                    break;
+                }
+
+                case "DRAW_END": {
+                    String sender = msg.getSenderId();
+                    whiteboardPanel.endRemoteStroke(sender, msg.getStrokeId());
                     break;
                 }
 
@@ -804,7 +832,7 @@ public class WhiteboardClient {
                     int h = msg.getY2();
                     Color col = new Color(msg.getColorRgb());
                     int wSize = msg.getStrokeWidth();
-                    whiteboardPanel.addRemoteShape(WhiteboardPanel.Stroke.ShapeType.RECTANGLE, x, y, w, h, col, wSize);
+                    whiteboardPanel.addRemoteShape(WhiteboardPanel.Stroke.ShapeType.RECTANGLE, msg.getStrokeId(), x, y, w, h, col, wSize);
                     break;
                 }
 
@@ -815,7 +843,7 @@ public class WhiteboardClient {
                     int h = msg.getY2();
                     Color col = new Color(msg.getColorRgb());
                     int wSize = msg.getStrokeWidth();
-                    whiteboardPanel.addRemoteShape(WhiteboardPanel.Stroke.ShapeType.CIRCLE, x, y, w, h, col, wSize);
+                    whiteboardPanel.addRemoteShape(WhiteboardPanel.Stroke.ShapeType.CIRCLE, msg.getStrokeId(), x, y, w, h, col, wSize);
                     break;
                 }
 
@@ -826,7 +854,7 @@ public class WhiteboardClient {
                     int h = msg.getY2();
                     Color col = new Color(msg.getColorRgb());
                     int wSize = msg.getStrokeWidth();
-                    whiteboardPanel.addRemoteShape(WhiteboardPanel.Stroke.ShapeType.TRIANGLE, x, y, w, h, col, wSize);
+                    whiteboardPanel.addRemoteShape(WhiteboardPanel.Stroke.ShapeType.TRIANGLE, msg.getStrokeId(), x, y, w, h, col, wSize);
                     break;
                 }
 
@@ -836,7 +864,7 @@ public class WhiteboardClient {
                     Color col = new Color(msg.getColorRgb());
                     int fontSize = msg.getFontSize();
                     String content = msg.getText();
-                    whiteboardPanel.addRemoteText(content, x, y, col, fontSize);
+                    whiteboardPanel.addRemoteText(msg.getStrokeId(), content, x, y, col, fontSize);
                     break;
                 }
 
@@ -855,17 +883,13 @@ public class WhiteboardClient {
                     break;
 
                 case "UNDO":
-                    whiteboardPanel.undoRemoteAction();
+                    whiteboardPanel.undoRemoteAction(msg.getStrokeId());
                     updateStatus("Undo action performed by remote user");
                     break;
 
                 case "CLEAR_CANVAS":
                     whiteboardPanel.clearCanvas();
                     updateStatus("Canvas cleared by remote user");
-                    break;
-
-                case "DRAW_START":
-                case "DRAW_END":
                     break;
 
                 case "CHAT_MESSAGE": {

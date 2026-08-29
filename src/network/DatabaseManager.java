@@ -38,7 +38,8 @@ public class DatabaseManager {
                 "id INTEGER PRIMARY KEY AUTOINCREMENT, " +
                 "action_type TEXT NOT NULL, " +
                 "json_data TEXT NOT NULL, " +
-                "timestamp INTEGER NOT NULL" +
+                "timestamp INTEGER NOT NULL, " +
+                "stroke_id TEXT" +
                 ")";
 
         String createSavedBoardsTable = "CREATE TABLE IF NOT EXISTS saved_boards (" +
@@ -62,6 +63,12 @@ public class DatabaseManager {
             stmt.execute(createDrawingsTable);
             stmt.execute(createSavedBoardsTable);
             stmt.execute(createBlockedSlangsTable);
+
+            try {
+                stmt.execute("ALTER TABLE drawings ADD COLUMN stroke_id TEXT");
+            } catch (SQLException ignored) {
+                // Column already exists
+            }
 
             System.out.println("[DatabaseManager] SQLite database initialized successfully.");
         } catch (SQLException e) {
@@ -111,27 +118,63 @@ public class DatabaseManager {
         return false;
     }
 
-    // Appends one drawing action to the persistent history.
-    public static synchronized void saveAction(String type, String jsonData) {
-        String sql = "INSERT INTO drawings (action_type, json_data, timestamp) VALUES (?, ?, ?)";
+    // Appends one drawing action to the persistent history with stroke identifier.
+    public static synchronized void saveAction(String type, String jsonData, String strokeId) {
+        String sql = "INSERT INTO drawings (action_type, json_data, timestamp, stroke_id) VALUES (?, ?, ?, ?)";
         try (Connection conn = getConnection();
              PreparedStatement pstmt = conn.prepareStatement(sql)) {
 
             pstmt.setString(1, type);
             pstmt.setString(2, jsonData);
             pstmt.setLong(3, System.currentTimeMillis());
+            pstmt.setString(4, strokeId);
             pstmt.executeUpdate();
         } catch (SQLException e) {
             System.err.println("[DatabaseManager] Error saving drawing action: " + e.getMessage());
         }
     }
 
-    // Deletes the most recent drawing action, backing an undo.
+    // Appends one drawing action to the persistent history.
+    public static synchronized void saveAction(String type, String jsonData) {
+        saveAction(type, jsonData, null);
+    }
+
+    // Deletes all records for a specific stroke ID, backing an undo.
+    public static synchronized void removeActionById(String strokeId) {
+        if (strokeId != null && !strokeId.trim().isEmpty()) {
+            String deleteSql = "DELETE FROM drawings WHERE stroke_id = ?";
+            try (Connection conn = getConnection();
+                 PreparedStatement pstmt = conn.prepareStatement(deleteSql)) {
+                pstmt.setString(1, strokeId);
+                pstmt.executeUpdate();
+            } catch (SQLException e) {
+                System.err.println("[DatabaseManager] Error removing action by id: " + e.getMessage());
+            }
+        } else {
+            removeLastAction();
+        }
+    }
+
+    // Deletes the most recent drawing action or full stroke, backing an undo.
     public static synchronized void removeLastAction() {
-        String sql = "DELETE FROM drawings WHERE id = (SELECT MAX(id) FROM drawings)";
+        String queryLatestStroke = "SELECT stroke_id FROM drawings ORDER BY id DESC LIMIT 1";
         try (Connection conn = getConnection();
-             Statement stmt = conn.createStatement()) {
-            stmt.executeUpdate(sql);
+             Statement stmt = conn.createStatement();
+             ResultSet rs = stmt.executeQuery(queryLatestStroke)) {
+
+            if (rs.next()) {
+                String strokeId = rs.getString("stroke_id");
+                if (strokeId != null && !strokeId.trim().isEmpty()) {
+                    String deleteSql = "DELETE FROM drawings WHERE stroke_id = ?";
+                    try (PreparedStatement pstmt = conn.prepareStatement(deleteSql)) {
+                        pstmt.setString(1, strokeId);
+                        pstmt.executeUpdate();
+                    }
+                } else {
+                    String deleteSql = "DELETE FROM drawings WHERE id = (SELECT MAX(id) FROM drawings)";
+                    stmt.executeUpdate(deleteSql);
+                }
+            }
         } catch (SQLException e) {
             System.err.println("[DatabaseManager] Error performing undo: " + e.getMessage());
         }

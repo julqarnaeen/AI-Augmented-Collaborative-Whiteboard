@@ -35,6 +35,7 @@ public class WhiteboardPanel extends JPanel {
         // The forms a stroke can take once recognized.
         public enum ShapeType { FREEHAND, LINE, RECTANGLE, CIRCLE, TRIANGLE }
 
+        private String strokeId;
         private List<DrawPoint> points;
         private Color color;
         private int strokeWidth;
@@ -56,6 +57,15 @@ public class WhiteboardPanel extends JPanel {
             this.y1 = y1;
             this.x2 = x2;
             this.y2 = y2;
+            this.strokeId = java.util.UUID.randomUUID().toString();
+        }
+
+        public String getStrokeId() {
+            return strokeId;
+        }
+
+        public void setStrokeId(String strokeId) {
+            this.strokeId = strokeId;
         }
 
         // Appends one pen position to a freehand stroke.
@@ -95,6 +105,7 @@ public class WhiteboardPanel extends JPanel {
 
     // One piece of text placed on the canvas.
     public static class TextElement {
+        private String textId;
         private final String text;
         private int x;
         private int y;
@@ -108,6 +119,15 @@ public class WhiteboardPanel extends JPanel {
             this.y = y;
             this.color = color;
             this.fontSize = fontSize;
+            this.textId = java.util.UUID.randomUUID().toString();
+        }
+
+        public String getTextId() {
+            return textId;
+        }
+
+        public void setTextId(String textId) {
+            this.textId = textId;
         }
 
         // Returns the displayed text.
@@ -124,6 +144,17 @@ public class WhiteboardPanel extends JPanel {
         public Color getColor() { return color; }
         // Returns the font size in points.
         public int getFontSize() { return fontSize; }
+    }
+
+    // Identifies one undoable canvas item by unique ID and type.
+    public static class CanvasAction {
+        public final String id;
+        public final String type;
+
+        public CanvasAction(String id, String type) {
+            this.id = id;
+            this.type = type;
+        }
     }
 
     // Whether clicks draw freehand or place text.
@@ -155,7 +186,10 @@ public class WhiteboardPanel extends JPanel {
 
     private double zoomFactor = 1.0;
 
-    private final List<String> actionHistory = java.util.Collections.synchronizedList(new ArrayList<>());
+    private String currentStrokeId = null;
+    private final java.util.Map<String, Stroke> activeRemoteStrokes = new java.util.concurrent.ConcurrentHashMap<>();
+
+    private final List<CanvasAction> actionHistory = java.util.Collections.synchronizedList(new ArrayList<>());
     private final Gson gson = new Gson();
 
     // Builds the canvas and wires up the mouse listeners.
@@ -210,11 +244,14 @@ public class WhiteboardPanel extends JPanel {
                             textColor = Color.BLACK;
                         }
 
+                        String textStrokeId = java.util.UUID.randomUUID().toString();
                         TextElement te = new TextElement(moderatedText, mouseX, mouseY, textColor, currentFontSize);
+                        te.setTextId(textStrokeId);
                         textElements.add(te);
-                        actionHistory.add("T");
+                        actionHistory.add(new CanvasAction(textStrokeId, "T"));
 
                         NetworkMessage textMsg = new NetworkMessage("TEXT");
+                        textMsg.setStrokeId(textStrokeId);
                         textMsg.setX1(mouseX);
                         textMsg.setY1(mouseY);
                         textMsg.setColorRgb(textColor.getRGB());
@@ -227,12 +264,15 @@ public class WhiteboardPanel extends JPanel {
                     return;
                 }
 
+                currentStrokeId = java.util.UUID.randomUUID().toString();
                 currentStroke = new Stroke(currentColor, currentStrokeWidth);
+                currentStroke.setStrokeId(currentStrokeId);
                 currentStroke.addPoint(mouseX, mouseY);
                 strokes.add(currentStroke);
 
                 if (!autoNormalize) {
                     NetworkMessage startMsg = new NetworkMessage("DRAW_START");
+                    startMsg.setStrokeId(currentStrokeId);
                     startMsg.setX1(mouseX);
                     startMsg.setY1(mouseY);
                     startMsg.setColorRgb(currentColor.getRGB());
@@ -266,11 +306,14 @@ public class WhiteboardPanel extends JPanel {
                         ShapeRecognizer.NormalizedShape ns = ShapeRecognizer.normalize(currentStroke.getPoints());
 
                         if (ns.type == ShapeRecognizer.NormalizedShape.Type.LINE) {
+                            String shapeId = currentStrokeId != null ? currentStrokeId : java.util.UUID.randomUUID().toString();
                             Stroke normLine = new Stroke(currentColor, currentStrokeWidth, Stroke.ShapeType.LINE, ns.x1, ns.y1, ns.x2, ns.y2);
+                            normLine.setStrokeId(shapeId);
                             strokes.add(normLine);
-                            actionHistory.add("S");
+                            actionHistory.add(new CanvasAction(shapeId, "S"));
 
                             NetworkMessage lineMsg = new NetworkMessage("DRAW_LINE");
+                            lineMsg.setStrokeId(shapeId);
                             lineMsg.setX1(ns.x1);
                             lineMsg.setY1(ns.y1);
                             lineMsg.setX2(ns.x2);
@@ -279,11 +322,14 @@ public class WhiteboardPanel extends JPanel {
                             lineMsg.setStrokeWidth(currentStrokeWidth);
                             sendJsonMessage(lineMsg);
                         } else if (ns.type == ShapeRecognizer.NormalizedShape.Type.RECTANGLE) {
+                            String shapeId = currentStrokeId != null ? currentStrokeId : java.util.UUID.randomUUID().toString();
                             Stroke normRect = new Stroke(currentColor, currentStrokeWidth, Stroke.ShapeType.RECTANGLE, ns.x1, ns.y1, ns.x2, ns.y2);
+                            normRect.setStrokeId(shapeId);
                             strokes.add(normRect);
-                            actionHistory.add("S");
+                            actionHistory.add(new CanvasAction(shapeId, "S"));
 
                             NetworkMessage rectMsg = new NetworkMessage("DRAW_RECT");
+                            rectMsg.setStrokeId(shapeId);
                             rectMsg.setX1(ns.x1);
                             rectMsg.setY1(ns.y1);
                             rectMsg.setX2(ns.x2);
@@ -292,11 +338,14 @@ public class WhiteboardPanel extends JPanel {
                             rectMsg.setStrokeWidth(currentStrokeWidth);
                             sendJsonMessage(rectMsg);
                         } else if (ns.type == ShapeRecognizer.NormalizedShape.Type.CIRCLE) {
+                            String shapeId = currentStrokeId != null ? currentStrokeId : java.util.UUID.randomUUID().toString();
                             Stroke normCircle = new Stroke(currentColor, currentStrokeWidth, Stroke.ShapeType.CIRCLE, ns.x1, ns.y1, ns.x2, ns.y2);
+                            normCircle.setStrokeId(shapeId);
                             strokes.add(normCircle);
-                            actionHistory.add("S");
+                            actionHistory.add(new CanvasAction(shapeId, "S"));
 
                             NetworkMessage circleMsg = new NetworkMessage("DRAW_CIRCLE");
+                            circleMsg.setStrokeId(shapeId);
                             circleMsg.setX1(ns.x1);
                             circleMsg.setY1(ns.y1);
                             circleMsg.setX2(ns.x2);
@@ -305,11 +354,14 @@ public class WhiteboardPanel extends JPanel {
                             circleMsg.setStrokeWidth(currentStrokeWidth);
                             sendJsonMessage(circleMsg);
                         } else if (ns.type == ShapeRecognizer.NormalizedShape.Type.TRIANGLE) {
+                            String shapeId = currentStrokeId != null ? currentStrokeId : java.util.UUID.randomUUID().toString();
                             Stroke normTri = new Stroke(currentColor, currentStrokeWidth, Stroke.ShapeType.TRIANGLE, ns.x1, ns.y1, ns.x2, ns.y2);
+                            normTri.setStrokeId(shapeId);
                             strokes.add(normTri);
-                            actionHistory.add("S");
+                            actionHistory.add(new CanvasAction(shapeId, "S"));
 
                             NetworkMessage triMsg = new NetworkMessage("DRAW_TRI");
+                            triMsg.setStrokeId(shapeId);
                             triMsg.setX1(ns.x1);
                             triMsg.setY1(ns.y1);
                             triMsg.setX2(ns.x2);
@@ -318,11 +370,14 @@ public class WhiteboardPanel extends JPanel {
                             triMsg.setStrokeWidth(currentStrokeWidth);
                             sendJsonMessage(triMsg);
                         } else {
+                            String sId = currentStrokeId != null ? currentStrokeId : java.util.UUID.randomUUID().toString();
+                            currentStroke.setStrokeId(sId);
                             strokes.add(currentStroke);
-                            actionHistory.add("S");
+                            actionHistory.add(new CanvasAction(sId, "S"));
                             List<DrawPoint> pts = currentStroke.getPoints();
                             if (pts.size() > 0) {
                                 NetworkMessage startMsg = new NetworkMessage("DRAW_START");
+                                startMsg.setStrokeId(sId);
                                 startMsg.setX1(pts.get(0).x);
                                 startMsg.setY1(pts.get(0).y);
                                 startMsg.setColorRgb(currentColor.getRGB());
@@ -333,6 +388,7 @@ public class WhiteboardPanel extends JPanel {
                                     DrawPoint p1 = pts.get(i);
                                     DrawPoint p2 = pts.get(i + 1);
                                     NetworkMessage lineMsg = new NetworkMessage("DRAW_LINE");
+                                    lineMsg.setStrokeId(sId);
                                     lineMsg.setX1(p1.x);
                                     lineMsg.setY1(p1.y);
                                     lineMsg.setX2(p2.x);
@@ -341,15 +397,20 @@ public class WhiteboardPanel extends JPanel {
                                     lineMsg.setStrokeWidth(currentStrokeWidth);
                                     sendJsonMessage(lineMsg);
                                 }
-                                sendJsonMessage(new NetworkMessage("DRAW_END"));
+                                NetworkMessage endMsg = new NetworkMessage("DRAW_END");
+                                endMsg.setStrokeId(sId);
+                                sendJsonMessage(endMsg);
                             }
                         }
                     } else {
-                        sendJsonMessage(new NetworkMessage("DRAW_END"));
-                        actionHistory.add("S");
+                        NetworkMessage endMsg = new NetworkMessage("DRAW_END");
+                        endMsg.setStrokeId(currentStrokeId);
+                        sendJsonMessage(endMsg);
+                        actionHistory.add(new CanvasAction(currentStrokeId, "S"));
                     }
 
                     currentStroke = null;
+                    currentStrokeId = null;
                     repaint();
                 }
             }
@@ -394,6 +455,7 @@ public class WhiteboardPanel extends JPanel {
 
                     if (!autoNormalize) {
                         NetworkMessage lineMsg = new NetworkMessage("DRAW_LINE");
+                        lineMsg.setStrokeId(currentStrokeId);
                         lineMsg.setX1(prev.x);
                         lineMsg.setY1(prev.y);
                         lineMsg.setX2(mouseX);
@@ -500,18 +562,71 @@ public class WhiteboardPanel extends JPanel {
     public void addRemoteStroke(Stroke stroke) {
         if (stroke != null) {
             strokes.add(stroke);
+            if (stroke.getStrokeId() == null) {
+                stroke.setStrokeId(java.util.UUID.randomUUID().toString());
+            }
+            actionHistory.add(new CanvasAction(stroke.getStrokeId(), "S"));
             repaint();
         }
     }
 
-    // Appends one remote line segment to the canvas.
-    public void addRemoteLine(int x1, int y1, int x2, int y2, Color color, int lineWidth) {
-        Stroke segment = new Stroke(color, lineWidth);
-        segment.addPoint(x1, y1);
-        segment.addPoint(x2, y2);
-        strokes.add(segment);
-        actionHistory.add("S");
+    // Starts an active remote freehand stroke.
+    public void startRemoteStroke(String senderId, String strokeId, int x, int y, Color color, int strokeWidth) {
+        Stroke stroke = new Stroke(color, strokeWidth);
+        String sId = strokeId != null && !strokeId.isEmpty() ? strokeId : java.util.UUID.randomUUID().toString();
+        stroke.setStrokeId(sId);
+        stroke.addPoint(x, y);
+        strokes.add(stroke);
+        if (senderId != null) {
+            activeRemoteStrokes.put(senderId, stroke);
+        }
         repaint();
+    }
+
+    public void startRemoteStroke(String senderId, int x, int y, Color color, int strokeWidth) {
+        startRemoteStroke(senderId, null, x, y, color, strokeWidth);
+    }
+
+    // Appends a point to an active remote stroke.
+    public void appendRemoteStrokePoint(String senderId, int x2, int y2) {
+        Stroke stroke = senderId != null ? activeRemoteStrokes.get(senderId) : null;
+        if (stroke != null) {
+            stroke.addPoint(x2, y2);
+            repaint();
+        }
+    }
+
+    // Completes an active remote stroke and records it once in actionHistory.
+    public void endRemoteStroke(String senderId, String strokeId) {
+        Stroke stroke = senderId != null ? activeRemoteStrokes.remove(senderId) : null;
+        String sId = strokeId != null && !strokeId.isEmpty() ? strokeId : (stroke != null ? stroke.getStrokeId() : null);
+        if (sId != null) {
+            actionHistory.add(new CanvasAction(sId, "S"));
+        }
+        repaint();
+    }
+
+    public void endRemoteStroke(String senderId) {
+        endRemoteStroke(senderId, null);
+    }
+
+    // Checks whether there is an in-progress remote stroke for this sender.
+    public boolean hasActiveRemoteStroke(String senderId) {
+        return senderId != null && activeRemoteStrokes.containsKey(senderId);
+    }
+
+    // Appends one remote line segment to the canvas.
+    public void addRemoteLine(String strokeId, int x1, int y1, int x2, int y2, Color color, int lineWidth) {
+        String sId = strokeId != null && !strokeId.isEmpty() ? strokeId : java.util.UUID.randomUUID().toString();
+        Stroke segment = new Stroke(color, lineWidth, Stroke.ShapeType.LINE, x1, y1, x2, y2);
+        segment.setStrokeId(sId);
+        strokes.add(segment);
+        actionHistory.add(new CanvasAction(sId, "S"));
+        repaint();
+    }
+
+    public void addRemoteLine(int x1, int y1, int x2, int y2, Color color, int lineWidth) {
+        addRemoteLine(null, x1, y1, x2, y2, color, lineWidth);
     }
 
     // Removes every stroke and text element.
@@ -519,33 +634,49 @@ public class WhiteboardPanel extends JPanel {
         strokes.clear();
         textElements.clear();
         actionHistory.clear();
+        activeRemoteStrokes.clear();
         repaint();
         System.out.println("[WhiteboardPanel] Canvas cleared.");
     }
 
     // Adds a normalized shape received from another client.
-    public void addRemoteShape(Stroke.ShapeType type, int x, int y, int w, int h, Color color, int strokeWidth) {
+    public void addRemoteShape(Stroke.ShapeType type, String strokeId, int x, int y, int w, int h, Color color, int strokeWidth) {
+        String sId = strokeId != null && !strokeId.isEmpty() ? strokeId : java.util.UUID.randomUUID().toString();
         Stroke shape = new Stroke(color, strokeWidth, type, x, y, w, h);
+        shape.setStrokeId(sId);
         strokes.add(shape);
-        actionHistory.add("S");
+        actionHistory.add(new CanvasAction(sId, "S"));
         repaint();
     }
 
+    public void addRemoteShape(Stroke.ShapeType type, int x, int y, int w, int h, Color color, int strokeWidth) {
+        addRemoteShape(type, null, x, y, w, h, color, strokeWidth);
+    }
+
     // Adds a text element received from another client.
-    public void addRemoteText(String text, int x, int y, Color color, int fontSize) {
+    public void addRemoteText(String textId, String text, int x, int y, Color color, int fontSize) {
+        String tId = textId != null && !textId.isEmpty() ? textId : java.util.UUID.randomUUID().toString();
         TextElement te = new TextElement(text, x, y, color, fontSize);
+        te.setTextId(tId);
         textElements.add(te);
-        actionHistory.add("T");
+        actionHistory.add(new CanvasAction(tId, "T"));
         repaint();
+    }
+
+    public void addRemoteText(String text, int x, int y, Color color, int fontSize) {
+        addRemoteText(null, text, x, y, color, fontSize);
     }
 
     // Adds a text element here and broadcasts it to the others.
     public void addLocalTextElement(String text, int x, int y, Color color, int fontSize) {
+        String textId = java.util.UUID.randomUUID().toString();
         TextElement te = new TextElement(text, x, y, color, fontSize);
+        te.setTextId(textId);
         textElements.add(te);
-        actionHistory.add("T");
+        actionHistory.add(new CanvasAction(textId, "T"));
 
         NetworkMessage textMsg = new NetworkMessage("TEXT");
+        textMsg.setStrokeId(textId);
         textMsg.setX1(x);
         textMsg.setY1(y);
         textMsg.setColorRgb(color.getRGB());
@@ -559,28 +690,49 @@ public class WhiteboardPanel extends JPanel {
     // Removes the most recent local stroke or text element.
     public void undoLastAction() {
         if (!actionHistory.isEmpty()) {
-            String lastAction = actionHistory.remove(actionHistory.size() - 1);
-            if ("S".equals(lastAction) && !strokes.isEmpty()) {
-                strokes.remove(strokes.size() - 1);
-            } else if ("T".equals(lastAction) && !textElements.isEmpty()) {
-                textElements.remove(textElements.size() - 1);
+            CanvasAction lastAction = actionHistory.remove(actionHistory.size() - 1);
+            String targetId = lastAction.id;
+            synchronized (strokes) {
+                strokes.removeIf(s -> targetId != null && targetId.equals(s.getStrokeId()));
+            }
+            synchronized (textElements) {
+                textElements.removeIf(t -> targetId != null && targetId.equals(t.getTextId()));
             }
             repaint();
-            sendJsonMessage(new NetworkMessage("UNDO"));
+
+            NetworkMessage undoMsg = new NetworkMessage("UNDO");
+            undoMsg.setStrokeId(targetId);
+            sendJsonMessage(undoMsg);
         }
     }
 
     // Removes the most recent item after a remote undo.
-    public void undoRemoteAction() {
-        if (!actionHistory.isEmpty()) {
-            String lastAction = actionHistory.remove(actionHistory.size() - 1);
-            if ("S".equals(lastAction) && !strokes.isEmpty()) {
-                strokes.remove(strokes.size() - 1);
-            } else if ("T".equals(lastAction) && !textElements.isEmpty()) {
-                textElements.remove(textElements.size() - 1);
+    public void undoRemoteAction(String targetId) {
+        if (targetId != null && !targetId.trim().isEmpty()) {
+            synchronized (strokes) {
+                strokes.removeIf(s -> targetId.equals(s.getStrokeId()));
             }
-            repaint();
+            synchronized (textElements) {
+                textElements.removeIf(t -> targetId.equals(t.getTextId()));
+            }
+            synchronized (actionHistory) {
+                actionHistory.removeIf(a -> targetId.equals(a.id));
+            }
+        } else if (!actionHistory.isEmpty()) {
+            CanvasAction lastAction = actionHistory.remove(actionHistory.size() - 1);
+            String tid = lastAction.id;
+            synchronized (strokes) {
+                strokes.removeIf(s -> tid != null && tid.equals(s.getStrokeId()));
+            }
+            synchronized (textElements) {
+                textElements.removeIf(t -> tid != null && tid.equals(t.getTextId()));
+            }
         }
+        repaint();
+    }
+
+    public void undoRemoteAction() {
+        undoRemoteAction(null);
     }
 
     // Repositions a text element that another client dragged.
@@ -715,7 +867,9 @@ public class WhiteboardPanel extends JPanel {
                 if (stroke.getType() == Stroke.ShapeType.FREEHAND) {
                     List<DrawPoint> pts = stroke.getPoints();
                     if (pts.size() > 0) {
+                        String sId = java.util.UUID.randomUUID().toString();
                         NetworkMessage start = new NetworkMessage("DRAW_START");
+                        start.setStrokeId(sId);
                         start.setX1(pts.get(0).x);
                         start.setY1(pts.get(0).y);
                         start.setColorRgb(stroke.getColor().getRGB());
@@ -727,6 +881,7 @@ public class WhiteboardPanel extends JPanel {
                             DrawPoint p1 = pts.get(i);
                             DrawPoint p2 = pts.get(i + 1);
                             NetworkMessage line = new NetworkMessage("DRAW_LINE");
+                            line.setStrokeId(sId);
                             line.setX1(p1.x);
                             line.setY1(p1.y);
                             line.setX2(p2.x);
@@ -737,6 +892,7 @@ public class WhiteboardPanel extends JPanel {
                             list.add(gson.toJson(line));
                         }
                         NetworkMessage end = new NetworkMessage("DRAW_END");
+                        end.setStrokeId(sId);
                         end.setSenderId(client != null ? client.getClientId() : "local");
                         list.add(gson.toJson(end));
                     }
@@ -747,6 +903,7 @@ public class WhiteboardPanel extends JPanel {
                     else if (stroke.getType() == Stroke.ShapeType.TRIANGLE) typeStr = "DRAW_TRI";
 
                     NetworkMessage shape = new NetworkMessage(typeStr);
+                    shape.setStrokeId(java.util.UUID.randomUUID().toString());
                     shape.setX1(stroke.getX1());
                     shape.setY1(stroke.getY1());
                     shape.setX2(stroke.getX2());
@@ -761,16 +918,18 @@ public class WhiteboardPanel extends JPanel {
 
         synchronized (textElements) {
             for (TextElement te : textElements) {
-                NetworkMessage text = new NetworkMessage("TEXT");
-                text.setX1(te.getX());
-                text.setY1(te.getY());
-                text.setColorRgb(te.getColor().getRGB());
-                text.setFontSize(te.getFontSize());
-                text.setText(te.getText());
-                text.setSenderId(client != null ? client.getClientId() : "local");
-                list.add(gson.toJson(text));
+                NetworkMessage textMsg = new NetworkMessage("TEXT");
+                textMsg.setStrokeId(java.util.UUID.randomUUID().toString());
+                textMsg.setX1(te.getX());
+                textMsg.setY1(te.getY());
+                textMsg.setColorRgb(te.getColor().getRGB());
+                textMsg.setFontSize(te.getFontSize());
+                textMsg.setText(te.getText());
+                textMsg.setSenderId(client != null ? client.getClientId() : "local");
+                list.add(gson.toJson(textMsg));
             }
         }
+
         return list;
     }
 

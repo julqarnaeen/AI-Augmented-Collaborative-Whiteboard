@@ -111,7 +111,7 @@ public class ClientHandler extends Thread {
                     for (String actionJson : actions) {
                         try {
                             NetworkMessage actionMsg = gson.fromJson(actionJson, NetworkMessage.class);
-                            DatabaseManager.saveAction(actionMsg.getType(), actionJson);
+                            DatabaseManager.saveAction(actionMsg.getType(), actionJson, actionMsg.getStrokeId());
                         } catch (Exception ex) {
                             System.err.println("[Server] Error restoring drawing: " + ex.getMessage());
                         }
@@ -142,9 +142,14 @@ public class ClientHandler extends Thread {
                 if ("CLEAR_CANVAS".equals(messageType)) {
                     DatabaseManager.clearDrawings();
                 } else if ("UNDO".equals(messageType)) {
-                    DatabaseManager.removeLastAction();
-                } else if (!"DRAW_START".equals(messageType) && !"DRAW_END".equals(messageType)) {
-                    DatabaseManager.saveAction(messageType, jsonToSend);
+                    String strokeId = msg.getStrokeId();
+                    if (strokeId != null && !strokeId.trim().isEmpty()) {
+                        DatabaseManager.removeActionById(strokeId);
+                    } else {
+                        DatabaseManager.removeLastAction();
+                    }
+                } else {
+                    DatabaseManager.saveAction(messageType, jsonToSend, msg.getStrokeId());
                 }
 
                 server.broadcastMessage(jsonToSend, this);

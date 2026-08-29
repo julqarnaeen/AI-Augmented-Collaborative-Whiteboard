@@ -121,6 +121,18 @@ public class NetworkMessage {
         this.fontSize = fontSize;
     }
 
+    private String strokeId;
+
+    // Returns the unique stroke or action identifier.
+    public String getStrokeId() {
+        return strokeId;
+    }
+
+    // Sets the unique stroke or action identifier.
+    public void setStrokeId(String strokeId) {
+        this.strokeId = strokeId;
+    }
+
     private String jsonData;
 
     // Returns the nested JSON payload used for saved boards.
@@ -133,3 +145,4 @@ public class NetworkMessage {
         this.jsonData = jsonData;
     }
 }
+
