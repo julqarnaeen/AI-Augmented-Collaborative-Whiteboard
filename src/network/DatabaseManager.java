@@ -1,3 +1,4 @@
+// SQLite persistence for users, drawing history, saved boards, and the slang blocklist.
 package network;
 
 import java.sql.*;
@@ -20,10 +21,12 @@ public class DatabaseManager {
         }
     }
 
+    // Opens a JDBC connection to the whiteboard database file.
     private static Connection getConnection() throws SQLException {
         return DriverManager.getConnection(DB_URL);
     }
 
+    // Creates the tables on first run if they do not exist.
     private static void initializeDatabase() {
         String createUsersTable = "CREATE TABLE IF NOT EXISTS users (" +
                 "username TEXT PRIMARY KEY, " +
@@ -54,20 +57,19 @@ public class DatabaseManager {
 
         try (Connection conn = getConnection();
              Statement stmt = conn.createStatement()) {
-            
+
             stmt.execute(createUsersTable);
             stmt.execute(createDrawingsTable);
             stmt.execute(createSavedBoardsTable);
             stmt.execute(createBlockedSlangsTable);
-            
-            // No default seeding of admin user
-            
+
             System.out.println("[DatabaseManager] SQLite database initialized successfully.");
         } catch (SQLException e) {
             System.err.println("[DatabaseManager] Error initializing database: " + e.getMessage());
         }
     }
 
+    // Inserts a new user, returning false if the name is taken.
     public static synchronized boolean registerUser(String username, String password) {
         if (username == null || username.trim().isEmpty() || password == null || password.isEmpty()) {
             return false;
@@ -76,7 +78,7 @@ public class DatabaseManager {
         String sql = "INSERT INTO users (username, password_hash) VALUES (?, ?)";
         try (Connection conn = getConnection();
              PreparedStatement pstmt = conn.prepareStatement(sql)) {
-            
+
             pstmt.setString(1, normalizedUser);
             pstmt.setString(2, hashPassword(password));
             pstmt.executeUpdate();
@@ -86,6 +88,7 @@ public class DatabaseManager {
         }
     }
 
+    // Checks a username and password against the stored hash.
     public static boolean loginUser(String username, String password) {
         if (username == null || password == null) {
             return false;
@@ -94,7 +97,7 @@ public class DatabaseManager {
         String sql = "SELECT password_hash FROM users WHERE username = ?";
         try (Connection conn = getConnection();
              PreparedStatement pstmt = conn.prepareStatement(sql)) {
-            
+
             pstmt.setString(1, normalizedUser);
             try (ResultSet rs = pstmt.executeQuery()) {
                 if (rs.next()) {
@@ -108,13 +111,12 @@ public class DatabaseManager {
         return false;
     }
 
-    // --- Drawing State Persistence Methods ---
-
+    // Appends one drawing action to the persistent history.
     public static synchronized void saveAction(String type, String jsonData) {
         String sql = "INSERT INTO drawings (action_type, json_data, timestamp) VALUES (?, ?, ?)";
         try (Connection conn = getConnection();
              PreparedStatement pstmt = conn.prepareStatement(sql)) {
-            
+
             pstmt.setString(1, type);
             pstmt.setString(2, jsonData);
             pstmt.setLong(3, System.currentTimeMillis());
@@ -124,6 +126,7 @@ public class DatabaseManager {
         }
     }
 
+    // Deletes the most recent drawing action, backing an undo.
     public static synchronized void removeLastAction() {
         String sql = "DELETE FROM drawings WHERE id = (SELECT MAX(id) FROM drawings)";
         try (Connection conn = getConnection();
@@ -134,6 +137,7 @@ public class DatabaseManager {
         }
     }
 
+    // Empties the drawing history table.
     public static synchronized void clearDrawings() {
         String sql = "DELETE FROM drawings";
         try (Connection conn = getConnection();
@@ -144,13 +148,14 @@ public class DatabaseManager {
         }
     }
 
+    // Returns every stored drawing action in insertion order.
     public static List<String> getAllDrawings() {
         List<String> list = new ArrayList<>();
         String sql = "SELECT json_data FROM drawings ORDER BY id ASC";
         try (Connection conn = getConnection();
              Statement stmt = conn.createStatement();
              ResultSet rs = stmt.executeQuery(sql)) {
-            
+
             while (rs.next()) {
                 list.add(rs.getString("json_data"));
             }
@@ -160,6 +165,7 @@ public class DatabaseManager {
         return list;
     }
 
+    // Stores or replaces a named board snapshot for a user.
     public static synchronized boolean saveBoard(String username, String boardName, String jsonData) {
         String sql = "INSERT OR REPLACE INTO saved_boards (username, board_name, json_data) VALUES (?, ?, ?)";
         try (Connection conn = getConnection();
@@ -175,6 +181,7 @@ public class DatabaseManager {
         }
     }
 
+    // Returns the board names saved by a user.
     public static List<String> getSavedBoards(String username) {
         List<String> list = new ArrayList<>();
         String sql = "SELECT board_name FROM saved_boards WHERE username = ? ORDER BY board_name ASC";
@@ -192,6 +199,7 @@ public class DatabaseManager {
         return list;
     }
 
+    // Returns the stored JSON for one named board, or null.
     public static String loadBoard(String username, String boardName) {
         String sql = "SELECT json_data FROM saved_boards WHERE username = ? AND board_name = ?";
         try (Connection conn = getConnection();
@@ -209,6 +217,7 @@ public class DatabaseManager {
         return null;
     }
 
+    // Persists a blocked word so it survives a restart.
     public static synchronized void addBlockedSlang(String word) {
         String sql = "INSERT OR IGNORE INTO blocked_slangs (word) VALUES (?)";
         try (Connection conn = getConnection();
@@ -220,6 +229,7 @@ public class DatabaseManager {
         }
     }
 
+    // Returns every persisted blocked word.
     public static List<String> getAllBlockedSlangs() {
         List<String> list = new ArrayList<>();
         String sql = "SELECT word FROM blocked_slangs ORDER BY word ASC";
@@ -235,6 +245,7 @@ public class DatabaseManager {
         return list;
     }
 
+    // Returns the SHA-256 hex digest of a password.
     private static String hashPassword(String password) {
         try {
             MessageDigest digest = MessageDigest.getInstance("SHA-256");

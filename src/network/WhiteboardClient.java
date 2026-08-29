@@ -1,3 +1,4 @@
+// Swing client application: builds the window and toolbar, talks to the server, and drives the canvas.
 package network;
 
 import java.awt.*;
@@ -25,6 +26,7 @@ public class WhiteboardClient {
 
     private String clientId;
 
+    // Returns the name of the logged-in user.
     public String getClientId() {
         return clientId;
     }
@@ -39,12 +41,14 @@ public class WhiteboardClient {
     private javax.swing.text.html.HTMLEditorKit kit;
     private JTextField chatInput;
 
+    // Creates a client with its JSON codec ready.
     public WhiteboardClient() {
         this.running = false;
         this.clientId = "Not connected";
         this.gson = new Gson();
     }
 
+    // Assembles the window: toolbar, canvas, chat panel, and status bar.
     private void createGUI() {
 
         frame = new JFrame("AI-Augmented Collaborative Whiteboard — " + loggedInUser);
@@ -52,6 +56,7 @@ public class WhiteboardClient {
         frame.setDefaultCloseOperation(JFrame.DO_NOTHING_ON_CLOSE);
 
         frame.addWindowListener(new WindowAdapter() {
+            // Disconnects and exits when the window is closed.
             @Override
             public void windowClosing(WindowEvent e) {
 
@@ -69,16 +74,14 @@ public class WhiteboardClient {
 
         JScrollPane scrollPane = new JScrollPane(whiteboardPanel);
         scrollPane.getViewport().setBackground(Color.WHITE);
-        // Ensure scrollbars scroll comfortably
+
         scrollPane.getHorizontalScrollBar().setUnitIncrement(16);
         scrollPane.getVerticalScrollBar().setUnitIncrement(16);
 
         JPanel toolbar = createToolbar();
 
-        // Create Chat sidebar panel
         JPanel chatPanel = createChatPanel();
 
-        // Split Layout: Left scrollable canvas, Right chat panel
         JSplitPane splitPane = new JSplitPane(JSplitPane.HORIZONTAL_SPLIT, scrollPane, chatPanel);
         splitPane.setDividerLocation(900);
         splitPane.setResizeWeight(1.0);
@@ -99,8 +102,8 @@ public class WhiteboardClient {
         frame.getContentPane().add(splitPane, BorderLayout.CENTER);
         frame.getContentPane().add(statusLabel, BorderLayout.SOUTH);
 
-        // Limit client window initial size while keeping canvas scrollable
         frame.setPreferredSize(new Dimension(1200, 800));
+        frame.setMinimumSize(new Dimension(720, 520));
         frame.pack();
 
         frame.setLocationRelativeTo(null);
@@ -109,10 +112,10 @@ public class WhiteboardClient {
 
         System.out.println("[Client] GUI created and visible.");
 
-        // Auto-connect to server on GUI load
         connectToServer();
     }
 
+    // Applies the shared dark button styling and hover behaviour.
     private void styleButton(AbstractButton btn) {
         btn.setFont(new Font("Segoe UI", Font.BOLD, 12));
         btn.setForeground(Color.WHITE);
@@ -130,12 +133,14 @@ public class WhiteboardClient {
         );
 
         btn.addMouseListener(new MouseAdapter() {
+            // Lightens the button while the pointer is over it.
             @Override
             public void mouseEntered(MouseEvent e) {
                 if (!btn.isSelected()) {
                     btn.setBackground(hoverBackground);
                 }
             }
+            // Restores the button colour when the pointer leaves.
             @Override
             public void mouseExited(MouseEvent e) {
                 if (!btn.isSelected()) {
@@ -153,15 +158,113 @@ public class WhiteboardClient {
         });
     }
 
+    // Toolbar container that reflows its cards onto extra rows instead of clipping them.
+    private static class WrapPanel extends JPanel {
+
+        private final int hgap;
+        private final int vgap;
+
+        // Creates a wrapping container with the given gaps.
+        WrapPanel(int hgap, int vgap) {
+            super(null);
+            this.hgap = hgap;
+            this.vgap = vgap;
+            addComponentListener(new ComponentAdapter() {
+                // Re-runs layout whenever the toolbar width changes.
+                @Override
+                public void componentResized(ComponentEvent e) {
+                    revalidate();
+                }
+            });
+        }
+
+        // Packs the child cards into rows that fit the available width.
+        private java.util.List<java.util.List<Component>> rows(int available) {
+            java.util.List<java.util.List<Component>> rows = new java.util.ArrayList<>();
+            java.util.List<Component> row = new java.util.ArrayList<>();
+            int rowWidth = 0;
+            for (Component c : getComponents()) {
+                if (!c.isVisible()) {
+                    continue;
+                }
+                int width = c.getPreferredSize().width;
+                int next = row.isEmpty() ? width : rowWidth + hgap + width;
+                if (next > available && !row.isEmpty()) {
+                    rows.add(row);
+                    row = new java.util.ArrayList<>();
+                    next = width;
+                }
+                row.add(c);
+                rowWidth = next;
+            }
+            if (!row.isEmpty()) {
+                rows.add(row);
+            }
+            return rows;
+        }
+
+        // Positions each row and stretches its cards to fill the full width.
+        @Override
+        public void doLayout() {
+            Insets insets = getInsets();
+            int available = getWidth() - insets.left - insets.right;
+            if (available <= 0) {
+                return;
+            }
+            int y = insets.top;
+            for (java.util.List<Component> row : rows(available)) {
+                int preferred = 0;
+                int height = 0;
+                for (Component c : row) {
+                    preferred += c.getPreferredSize().width;
+                    height = Math.max(height, c.getPreferredSize().height);
+                }
+                int extra = available - preferred - hgap * (row.size() - 1);
+                int share = extra > 0 ? extra / row.size() : 0;
+                int x = insets.left;
+                for (int i = 0; i < row.size(); i++) {
+                    Component c = row.get(i);
+                    int width = c.getPreferredSize().width + share;
+                    if (i == row.size() - 1) {
+                        width = Math.max(width, insets.left + available - x);
+                    }
+                    c.setBounds(x, y, width, height);
+                    x += width + hgap;
+                }
+                y += height + vgap;
+            }
+        }
+
+        // Reports the height needed once the cards have wrapped.
+        @Override
+        public Dimension getPreferredSize() {
+            Insets insets = getInsets();
+            int available = getWidth() - insets.left - insets.right;
+            if (available <= 0) {
+                return super.getPreferredSize();
+            }
+            int height = insets.top + insets.bottom;
+            java.util.List<java.util.List<Component>> rows = rows(available);
+            for (java.util.List<Component> row : rows) {
+                int rowHeight = 0;
+                for (Component c : row) {
+                    rowHeight = Math.max(rowHeight, c.getPreferredSize().height);
+                }
+                height += rowHeight + vgap;
+            }
+            return new Dimension(available, Math.max(height - vgap, 0) + insets.bottom);
+        }
+    }
+
+    // Builds the toolbar cards: colours, tools, canvas actions, and board actions.
     private JPanel createToolbar() {
-        JPanel mainToolbar = new JPanel(new BorderLayout(15, 0));
+        JPanel mainToolbar = new WrapPanel(12, 4);
         mainToolbar.setBackground(new Color(15, 23, 42));
         mainToolbar.setBorder(BorderFactory.createCompoundBorder(
             BorderFactory.createMatteBorder(0, 0, 1, 0, new Color(30, 41, 59)),
             BorderFactory.createEmptyBorder(8, 12, 8, 12)
         ));
 
-        // Group 1: Left Card (Drawing & Styling Tools)
         JPanel cardLeft = new JPanel(new FlowLayout(FlowLayout.LEFT, 8, 4));
         cardLeft.setBackground(new Color(24, 32, 51));
         cardLeft.setBorder(BorderFactory.createCompoundBorder(
@@ -180,6 +283,7 @@ public class WhiteboardClient {
 
         for (int i = 0; i < colors.length; i++) {
             JButton colorBtn = new JButton() {
+                // Draws the colour swatch as a filled circle, ringed when selected.
                 @Override
                 protected void paintComponent(Graphics g) {
                     Graphics2D g2 = (Graphics2D) g.create();
@@ -249,6 +353,8 @@ public class WhiteboardClient {
         textBtn.setBackground(new Color(30, 41, 59));
         styleButton(drawBtn);
         styleButton(textBtn);
+        drawBtn.setPreferredSize(new Dimension(72, 28));
+        textBtn.setPreferredSize(new Dimension(72, 28));
 
         drawBtn.addActionListener(e -> {
             drawBtn.setSelected(true);
@@ -291,8 +397,6 @@ public class WhiteboardClient {
         });
         cardLeft.add(sizeCombo);
 
-
-        // Group 2: Center Card (Canvas Navigation & Actions)
         JPanel cardCenter = new JPanel(new FlowLayout(FlowLayout.CENTER, 8, 4));
         cardCenter.setBackground(new Color(24, 32, 51));
         cardCenter.setBorder(BorderFactory.createCompoundBorder(
@@ -395,9 +499,7 @@ public class WhiteboardClient {
         });
         cardCenter.add(zoomInBtn);
 
-
-        // Group 3: Right Card (AI Actions, IO & Connect)
-        JPanel cardRight = new JPanel(new FlowLayout(FlowLayout.RIGHT, 8, 4));
+        JPanel cardRight = new JPanel(new FlowLayout(FlowLayout.CENTER, 8, 4));
         cardRight.setBackground(new Color(24, 32, 51));
         cardRight.setBorder(BorderFactory.createCompoundBorder(
             BorderFactory.createLineBorder(new Color(51, 65, 85), 1),
@@ -412,11 +514,11 @@ public class WhiteboardClient {
             if (word != null && !word.trim().isEmpty()) {
                 String targetWord = word.trim().toLowerCase();
                 ContentModerator.addBlockedWord(targetWord);
-                
+
                 NetworkMessage blockMsg = new NetworkMessage("BLOCK_SLANG");
                 blockMsg.setText(targetWord);
                 sendMessage(gson.toJson(blockMsg));
-                
+
                 updateStatus("Custom slang blocked: " + targetWord);
             }
         });
@@ -425,41 +527,47 @@ public class WhiteboardClient {
         JButton solveMathBtn = new JButton("Solve Math");
         solveMathBtn.setBackground(new Color(16, 185, 129));
         styleButton(solveMathBtn);
-        solveMathBtn.setToolTipText("AI solve math expression drawn on canvas");
+        solveMathBtn.setToolTipText("Solve a math expression written with the Text tool");
         solveMathBtn.addActionListener(e -> {
-            updateStatus("Solving math expression...");
-            new Thread(() -> {
-                try {
-                    MathExpressionSolver.MathSolveResponse resp = MathExpressionSolver.solve(whiteboardPanel.getStrokes());
-                    if (resp != null && resp.result != null && !resp.result.equals("?")) {
-                        SwingUtilities.invokeLater(() -> {
-                            whiteboardPanel.addLocalTextElement(resp.result, resp.text_x, resp.text_y, whiteboardPanel.getDrawingColor(), whiteboardPanel.getCurrentFontSize());
-                            updateStatus("Math solved: " + resp.expression + " = " + resp.result);
-                        });
-                    } else {
-                        SwingUtilities.invokeLater(() -> {
-                            JOptionPane.showMessageDialog(frame,
-                                "Could not recognize any valid handwritten math expression.\n" +
-                                "Make sure to write a clear expression (e.g., 5 + 5 =) using freehand drawing.\n" +
-                                "Ensure other unrelated drawings on the canvas are cleared first.",
-                                "AI Math Solver",
-                                JOptionPane.WARNING_MESSAGE);
-                            updateStatus("Math solving failed");
-                        });
-                    }
-                } catch (Exception ex) {
-                    SwingUtilities.invokeLater(() -> {
-                        updateStatus("Math solving error: " + ex.getMessage());
-                    });
+            MathExpressionSolver.MathSolveResponse resp =
+                    MathExpressionSolver.solve(whiteboardPanel.getTextElements());
+            if (resp == null) {
+                String typed = WhiteboardPanel.showCustomInputDialog(frame, "Solve Math",
+                        "No solvable expression found on the canvas. Enter one (e.g. 5 + 5 * 2):");
+                if (typed == null || typed.trim().isEmpty()) {
+                    updateStatus("Math solving cancelled");
+                    return;
                 }
-            }).start();
+                Double value = MathExpressionSolver.eval(typed);
+                if (value == null) {
+                    JOptionPane.showMessageDialog(frame,
+                            "Could not parse: " + typed + "\n" +
+                            "Supported: + - * / % ^ ( ) sqrt abs sin cos tan log ln round floor ceil pi e",
+                            "Math Solver", JOptionPane.WARNING_MESSAGE);
+                    updateStatus("Math solving failed");
+                    return;
+                }
+                resp = new MathExpressionSolver.MathSolveResponse();
+                resp.expression = typed.trim();
+                resp.result = MathExpressionSolver.format(value);
+                resp.text_x = 40;
+                resp.text_y = 40;
+                whiteboardPanel.addLocalTextElement(resp.expression + " = " + resp.result,
+                        resp.text_x, resp.text_y,
+                        whiteboardPanel.getDrawingColor(), whiteboardPanel.getCurrentFontSize());
+                updateStatus("Math solved: " + resp.expression + " = " + resp.result);
+                return;
+            }
+            whiteboardPanel.addLocalTextElement("= " + resp.result, resp.text_x, resp.text_y,
+                    whiteboardPanel.getDrawingColor(), whiteboardPanel.getCurrentFontSize());
+            updateStatus("Math solved: " + resp.expression + " = " + resp.result);
         });
         cardRight.add(solveMathBtn);
 
         cardRight.add(new JLabel(" | "));
 
         JButton exportBtn = new JButton("Export");
-        exportBtn.setBackground(new Color(245, 158, 11)); // Amber
+        exportBtn.setBackground(new Color(245, 158, 11));
         styleButton(exportBtn);
         exportBtn.addActionListener(e -> {
             JFileChooser fileChooser = new JFileChooser();
@@ -490,7 +598,7 @@ public class WhiteboardClient {
             if (boardName != null && !boardName.trim().isEmpty()) {
                 java.util.List<String> actions = whiteboardPanel.serializeCanvasState();
                 String jsonData = gson.toJson(actions);
-                
+
                 NetworkMessage saveMsg = new NetworkMessage("SAVE_BOARD");
                 saveMsg.setSenderId(loggedInUser);
                 saveMsg.setText(boardName.trim());
@@ -530,13 +638,14 @@ public class WhiteboardClient {
         });
         cardRight.add(connectBtn);
 
-        mainToolbar.add(cardLeft, BorderLayout.WEST);
-        mainToolbar.add(cardCenter, BorderLayout.CENTER);
-        mainToolbar.add(cardRight, BorderLayout.EAST);
+        mainToolbar.add(cardLeft);
+        mainToolbar.add(cardCenter);
+        mainToolbar.add(cardRight);
 
         return mainToolbar;
     }
 
+    // Opens the socket to the server on a background thread.
     private void connectToServer() {
 
         new Thread(() -> {
@@ -574,6 +683,7 @@ public class WhiteboardClient {
         }, "ClientConnectionThread").start();
     }
 
+    // Reads server messages in a loop until the connection ends.
     private void receiveMessages() {
         try {
             String message;
@@ -597,6 +707,7 @@ public class WhiteboardClient {
         }
     }
 
+    // Decodes one server message and applies it to the UI.
     private void handleServerMessage(String jsonMessage) {
         if (jsonMessage == null || jsonMessage.isEmpty()) {
             return;
@@ -667,6 +778,7 @@ public class WhiteboardClient {
         }
     }
 
+    // Applies one remote drawing, text, or board action to the canvas.
     private void handleBroadcastMessage(NetworkMessage msg) {
         try {
             String actionType = msg.getType().toUpperCase();
@@ -791,12 +903,14 @@ public class WhiteboardClient {
         }
     }
 
+    // Sends a raw JSON message to the server if connected.
     public void sendMessage(String message) {
         if (connection != null && running) {
             connection.sendMessage(message);
         }
     }
 
+    // Closes the connection and resets the connect button.
     private void disconnect() {
         if (connection != null && running) {
             System.out.println("[Client] Disconnecting...");
@@ -818,6 +932,7 @@ public class WhiteboardClient {
         }
     }
 
+    // Builds the side chat panel with its history and input row.
     private JPanel createChatPanel() {
         JPanel chatPanel = new JPanel(new BorderLayout(5, 5));
         chatPanel.setPreferredSize(new Dimension(280, 0));
@@ -836,13 +951,12 @@ public class WhiteboardClient {
         chatPane = new JTextPane();
         chatPane.setEditable(false);
         chatPane.setContentType("text/html");
-        
+
         kit = new javax.swing.text.html.HTMLEditorKit();
         doc = new javax.swing.text.html.HTMLDocument();
         chatPane.setEditorKit(kit);
         chatPane.setDocument(doc);
 
-        // Styling the chat log elements
         javax.swing.text.html.StyleSheet styleSheet = kit.getStyleSheet();
         styleSheet.addRule("body { font-family: 'Segoe UI', -apple-system, sans-serif; color: #f8fafc; background-color: #182033; margin: 4px; padding: 0; }");
 
@@ -889,12 +1003,12 @@ public class WhiteboardClient {
 
         chatPanel.add(inputPanel, BorderLayout.SOUTH);
 
-        // Add a friendly greeting message to start
         appendChat("System", "Welcome to Collaborative Chat! Keep it clean.");
 
         return chatPanel;
     }
 
+    // Moderates and sends one chat line to the server.
     private void sendChatMessage(String rawMessage) {
         if (!running) {
             appendChat("System", "Not connected to the server. Message not sent.");
@@ -906,17 +1020,17 @@ public class WhiteboardClient {
         sendMessage(gson.toJson(msg));
     }
 
+    // Appends one formatted message to the chat history.
     private void appendChat(String sender, String message) {
         if (chatPane != null) {
             SwingUtilities.invokeLater(() -> {
                 try {
                     boolean isMe = loggedInUser.equalsIgnoreCase(sender);
-                    String color = isMe ? "#60a5fa" : "#818cf8"; // Lighter colors for dark theme
+                    String color = isMe ? "#60a5fa" : "#818cf8";
                     if ("System".equalsIgnoreCase(sender)) {
                         color = "#f59e0b";
                     }
 
-                    // Format sender display name
                     String displayName = sender;
                     if (isMe) {
                         displayName = sender + " (You)";
@@ -936,6 +1050,7 @@ public class WhiteboardClient {
         }
     }
 
+    // Lets the user pick one of their saved boards to load.
     private void showLoadBoardDialog(java.util.List<String> boards) {
         if (boards == null || boards.isEmpty()) {
             JOptionPane.showMessageDialog(frame, "No saved boards found for this account.", "Load Board", JOptionPane.INFORMATION_MESSAGE);
@@ -962,6 +1077,7 @@ public class WhiteboardClient {
         }
     }
 
+    // Writes one line to the status bar on the Swing thread.
     private void updateStatus(String message) {
         if (statusLabel != null) {
             if (SwingUtilities.isEventDispatchThread()) {
@@ -973,6 +1089,7 @@ public class WhiteboardClient {
         }
     }
 
+    // Shows the login window and reports whether sign-in succeeded.
     public static boolean showLoginDialog(JFrame parentFrame) {
         JDialog dialog = new JDialog(parentFrame, "Whiteboard Login", true);
         dialog.setUndecorated(true);
@@ -1125,6 +1242,7 @@ public class WhiteboardClient {
         return loggedIn[0];
     }
 
+    // Entry point: applies the system look and feel, logs in, then opens the window.
     public static void main(String[] args) {
         System.out.println("[Main] Starting Whiteboard Client...");
 
@@ -1137,7 +1255,6 @@ public class WhiteboardClient {
                     + e.getMessage());
             }
 
-            // Display styled login dialog first
             if (!showLoginDialog(null)) {
                 System.out.println("[Client] Login canceled. Exiting.");
                 System.exit(0);

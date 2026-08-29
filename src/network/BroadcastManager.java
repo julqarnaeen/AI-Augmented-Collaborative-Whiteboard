@@ -1,3 +1,4 @@
+// Client-side pump that queues outgoing drawing actions and dispatches incoming ones to a listener.
 package network;
 
 import java.io.IOException;
@@ -6,12 +7,9 @@ import java.util.concurrent.TimeUnit;
 import javax.swing.SwingUtilities;
 import com.google.gson.Gson;
 
-/**
- * Centralized message routing, serialization, and dispatch layer for the
- * collaborative whiteboard using JSON.
- */
 public class BroadcastManager {
 
+    // Callback contract for code that wants remote actions and system events.
     public interface BroadcastListener {
         void onRemoteAction(DrawingAction action);
         void onSystemEvent(String eventType, String eventData);
@@ -26,6 +24,7 @@ public class BroadcastManager {
     private final LinkedBlockingQueue<String> sendQueue;
     private final Gson gson;
 
+    // Builds a manager bound to one connection and client id.
     public BroadcastManager(ClientConnection connection, String clientId) {
         this.connection = connection;
         this.clientId = clientId;
@@ -36,10 +35,12 @@ public class BroadcastManager {
         System.out.println("[BroadcastManager] Created for client: " + clientId);
     }
 
+    // Registers the listener that receives decoded remote actions.
     public void setListener(BroadcastListener listener) {
         this.listener = listener;
     }
 
+    // Serializes a drawing action and queues it for sending.
     public void send(DrawingAction action) {
         if (action == null) return;
 
@@ -49,12 +50,14 @@ public class BroadcastManager {
         }
     }
 
+    // Queues an already-serialized JSON message for sending.
     public void sendRaw(String message) {
         if (message != null) {
             sendQueue.offer(message);
         }
     }
 
+    // Starts the background receive and send threads.
     public void startReceiving() {
         if (receiving) {
             System.out.println("[BroadcastManager] Already receiving.");
@@ -63,7 +66,6 @@ public class BroadcastManager {
 
         receiving = true;
 
-        // --- Sender thread ---
         senderThread = new Thread(() -> {
             System.out.println("[BroadcastManager] Sender thread started.");
             try {
@@ -82,7 +84,6 @@ public class BroadcastManager {
         senderThread.setDaemon(true);
         senderThread.start();
 
-        // --- Receiver thread ---
         receiveThread = new Thread(() -> {
             System.out.println("[BroadcastManager] Receiver thread started.");
             try {
@@ -112,6 +113,7 @@ public class BroadcastManager {
         System.out.println("[BroadcastManager] Receiving started.");
     }
 
+    // Signals both threads to stop and interrupts them.
     public void stopReceiving() {
         receiving = false;
 
@@ -123,10 +125,12 @@ public class BroadcastManager {
         System.out.println("[BroadcastManager] Receiving stopped.");
     }
 
+    // Reports whether the receive loop is currently active.
     public boolean isReceiving() {
         return receiving;
     }
 
+    // Stops the threads and closes the underlying connection.
     public void shutdown() {
         System.out.println("[BroadcastManager] Shutting down...");
         stopReceiving();
@@ -139,6 +143,7 @@ public class BroadcastManager {
         System.out.println("[BroadcastManager] Shutdown complete.");
     }
 
+    // Decodes one JSON message and hands it to the listener on the Swing thread.
     private void handleIncomingMessage(String jsonMessage) {
         if (jsonMessage == null || jsonMessage.isEmpty()) {
             return;
@@ -157,10 +162,9 @@ public class BroadcastManager {
 
             String type = msg.getType().toUpperCase();
 
-            // Check if it's a system message
-            if ("WELCOME".equals(type) || "USER_JOINED".equals(type) || 
+            if ("WELCOME".equals(type) || "USER_JOINED".equals(type) ||
                 "USER_LEFT".equals(type) || "SERVER_SHUTDOWN".equals(type) || "ERROR".equals(type)) {
-                
+
                 String eventData = msg.getSenderId();
                 if ("SERVER_SHUTDOWN".equals(type) || "ERROR".equals(type)) {
                     eventData = msg.getText();
@@ -168,7 +172,7 @@ public class BroadcastManager {
                 final String finalData = eventData != null ? eventData : "";
                 SwingUtilities.invokeLater(() -> currentListener.onSystemEvent(type, finalData));
             } else {
-                // It's a remote drawing action
+
                 DrawingAction action = DrawingAction.fromMessage(jsonMessage, msg.getSenderId());
                 if (action != null) {
                     SwingUtilities.invokeLater(() -> currentListener.onRemoteAction(action));

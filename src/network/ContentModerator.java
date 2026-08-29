@@ -1,3 +1,4 @@
+// Masks blocked words in user text, preferring the Python AI service and falling back to local regex.
 package network;
 
 import java.io.*;
@@ -43,6 +44,7 @@ public class ContentModerator {
         SlangRequest(String word) { this.word = word; }
     }
 
+    // Adds a word to the blocklist and syncs it to the Python service.
     public static void addBlockedWord(String word) {
         if (word != null && !word.trim().isEmpty()) {
             String target = word.trim().toLowerCase();
@@ -51,6 +53,7 @@ public class ContentModerator {
         }
     }
 
+    // Posts a newly blocked word to the Python service, ignoring failures.
     private static void syncSlangToPython(String word) {
         try {
             Gson gson = new Gson();
@@ -68,12 +71,13 @@ public class ContentModerator {
                 byte[] input = jsonPayload.getBytes(java.nio.charset.StandardCharsets.UTF_8);
                 os.write(input, 0, input.length);
             }
-            conn.getResponseCode(); // Fire and forget trigger
+            conn.getResponseCode();
         } catch (Exception e) {
-            // Silently fail, local copy is still updated
+
         }
     }
 
+    // Builds a regex that also matches leetspeak and separator bypasses of a word.
     private static String makeBypassRegex(String word) {
         String lower = word.toLowerCase();
         StringBuilder sb = new StringBuilder();
@@ -106,12 +110,12 @@ public class ContentModerator {
         }
     }
 
+    // Returns the input with blocked words masked, via the AI service or local regex.
     public static String moderateText(String input) {
         if (input == null || input.trim().isEmpty()) {
             return input;
         }
 
-        // Try Python AI service first
         try {
             Gson gson = new Gson();
             ModerationRequest req = new ModerationRequest(input);
@@ -148,7 +152,6 @@ public class ContentModerator {
             System.out.println("[ContentModerator] Python AI service offline. Falling back to local regex moderation.");
         }
 
-        // Fallback local regex matching
         String moderatedText = input;
         for (String word : BLOCKED_WORDS) {
             String regex = makeBypassRegex(word);

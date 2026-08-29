@@ -1,3 +1,4 @@
+// Server-side worker thread that serves one connected client and relays its messages.
 package network;
 
 import java.io.IOException;
@@ -23,18 +24,17 @@ public class ClientHandler extends Thread {
         System.out.println("[ClientHandler] Handler created for " + clientId);
     }
 
+    // Reads messages from this client until the connection drops.
     @Override
     public void run() {
         System.out.println("[ClientHandler] Thread started for "
             + connection.getClientId()
             + " | Thread: " + Thread.currentThread().getName());
 
-        // Send WELCOME message as JSON
         NetworkMessage welcome = new NetworkMessage("WELCOME");
         welcome.setSenderId(connection.getClientId());
         connection.sendMessage(gson.toJson(welcome));
 
-        // Stream all historical drawing actions from SQLite database
         java.util.List<String> history = DatabaseManager.getAllDrawings();
         for (String actionJson : history) {
             connection.sendMessage(actionJson);
@@ -65,6 +65,7 @@ public class ClientHandler extends Thread {
         }
     }
 
+    // Routes one incoming message by type: drawing, chat, board, or slang.
     private void handleMessage(String message) {
         if (message == null || message.trim().isEmpty()) {
             return;
@@ -88,11 +89,11 @@ public class ClientHandler extends Thread {
 
                 connection.close();
             } else if ("CHAT_MESSAGE".equals(messageType)) {
-                // Moderate chat message using ContentModerator
+
                 String rawText = msg.getText();
                 String moderated = ContentModerator.moderateText(rawText);
                 msg.setText(moderated);
-                // Retain client-submitted username senderId
+
                 server.broadcastMessage(gson.toJson(msg), null);
             } else if ("SAVE_BOARD".equals(messageType)) {
                 String username = msg.getSenderId();
@@ -130,15 +131,14 @@ public class ClientHandler extends Thread {
                 String targetWord = msg.getText().trim().toLowerCase();
                 DatabaseManager.addBlockedSlang(targetWord);
                 ContentModerator.addBlockedWord(targetWord);
-                
+
                 msg.setSenderId(connection.getClientId());
                 server.broadcastMessage(gson.toJson(msg), this);
             } else {
-                // Set sender ID
+
                 msg.setSenderId(connection.getClientId());
                 String jsonToSend = gson.toJson(msg);
 
-                // Persist drawing action to SQLite
                 if ("CLEAR_CANVAS".equals(messageType)) {
                     DatabaseManager.clearDrawings();
                 } else if ("UNDO".equals(messageType)) {
@@ -147,7 +147,6 @@ public class ClientHandler extends Thread {
                     DatabaseManager.saveAction(messageType, jsonToSend);
                 }
 
-                // Broadcast JSON message
                 server.broadcastMessage(jsonToSend, this);
             }
         } catch (Exception e) {
@@ -158,18 +157,22 @@ public class ClientHandler extends Thread {
         }
     }
 
+    // Sends one message to this client only.
     public void sendToClient(String message) {
         connection.sendMessage(message);
     }
 
+    // Returns the connection this handler serves.
     public ClientConnection getConnection() {
         return connection;
     }
 
+    // Returns the id of the client being served.
     public String getClientId() {
         return connection.getClientId();
     }
 
+    // Reports whether this client is still connected.
     public boolean isClientConnected() {
         return connection.isConnected();
     }

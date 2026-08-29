@@ -1,15 +1,13 @@
+// Typed record of one canvas action, convertible to and from the wire JSON format.
 package network;
 
 import java.awt.Color;
 import java.util.List;
 import com.google.gson.Gson;
 
-/**
- * A unified action model that wraps every discrete user action on the
- * whiteboard canvas.  Instances are immutable after construction.
- */
 public class DrawingAction {
 
+    // The kinds of canvas action that can be broadcast.
     public enum Type {
         STROKE,
         TEXT,
@@ -23,21 +21,18 @@ public class DrawingAction {
     private final String clientId;
     private final long timestamp;
 
-    /** Non-null only when {@code type == STROKE}. */
     private final WhiteboardPanel.Stroke stroke;
 
-    /** Non-null only when {@code type == TEXT}. */
     private final WhiteboardPanel.TextElement textElement;
 
-    /** Coordinates used when {@code type == MOVE_TEXT}. */
     private final int oldX;
     private final int oldY;
     private final int newX;
     private final int newY;
 
-    /** Free-form payload, e.g. the blocked word for {@code BLOCK_SLANG}. */
     private final String extraData;
 
+    // Creates an action carrying no payload, such as a clear or undo.
     public DrawingAction(Type type, String clientId) {
         this.type = type;
         this.clientId = clientId;
@@ -51,6 +46,7 @@ public class DrawingAction {
         this.extraData = null;
     }
 
+    // Creates an action carrying a drawn stroke.
     public DrawingAction(Type type, String clientId, WhiteboardPanel.Stroke stroke) {
         this.type = type;
         this.clientId = clientId;
@@ -64,6 +60,7 @@ public class DrawingAction {
         this.extraData = null;
     }
 
+    // Creates an action carrying a text element.
     public DrawingAction(Type type, String clientId, WhiteboardPanel.TextElement textElement) {
         this.type = type;
         this.clientId = clientId;
@@ -77,6 +74,7 @@ public class DrawingAction {
         this.extraData = null;
     }
 
+    // Creates an action describing a text element being moved.
     public DrawingAction(Type type, String clientId, int oldX, int oldY, int newX, int newY) {
         this.type = type;
         this.clientId = clientId;
@@ -90,6 +88,7 @@ public class DrawingAction {
         this.extraData = null;
     }
 
+    // Creates an action carrying a free-form payload such as chat text.
     public DrawingAction(Type type, String clientId, String extraData) {
         this.type = type;
         this.clientId = clientId;
@@ -103,49 +102,57 @@ public class DrawingAction {
         this.extraData = extraData;
     }
 
+    // Returns which kind of action this is.
     public Type getType() {
         return type;
     }
 
+    // Returns the id of the client that produced this action.
     public String getClientId() {
         return clientId;
     }
 
+    // Returns when this action was created, in milliseconds.
     public long getTimestamp() {
         return timestamp;
     }
 
+    // Returns the stroke payload, or null for other action kinds.
     public WhiteboardPanel.Stroke getStroke() {
         return stroke;
     }
 
+    // Returns the text payload, or null for other action kinds.
     public WhiteboardPanel.TextElement getTextElement() {
         return textElement;
     }
 
+    // Returns the x coordinate a text element moved from.
     public int getOldX() {
         return oldX;
     }
 
+    // Returns the y coordinate a text element moved from.
     public int getOldY() {
         return oldY;
     }
 
+    // Returns the x coordinate a text element moved to.
     public int getNewX() {
         return newX;
     }
 
+    // Returns the y coordinate a text element moved to.
     public int getNewY() {
         return newY;
     }
 
+    // Returns the free-form payload, such as chat text.
     public String getExtraData() {
         return extraData;
     }
 
-    /**
-     * Serializes this action into a JSON string using NetworkMessage.
-     */
+    // Serializes this action into the JSON message sent over the wire.
     public String toMessage() {
         Gson gson = new Gson();
         NetworkMessage msg = new NetworkMessage();
@@ -157,7 +164,7 @@ public class DrawingAction {
                 if (stroke == null) return null;
                 msg.setStrokeWidth(stroke.getStrokeWidth());
                 msg.setColorRgb(stroke.getColor().getRGB());
-                
+
                 if (stroke.getType() == WhiteboardPanel.Stroke.ShapeType.FREEHAND) {
                     List<WhiteboardPanel.DrawPoint> pts = stroke.getPoints();
                     if (pts != null && pts.size() >= 2) {
@@ -176,11 +183,11 @@ public class DrawingAction {
                     else if (stroke.getType() == WhiteboardPanel.Stroke.ShapeType.RECTANGLE) msg.setType("DRAW_RECT");
                     else if (stroke.getType() == WhiteboardPanel.Stroke.ShapeType.CIRCLE) msg.setType("DRAW_CIRCLE");
                     else if (stroke.getType() == WhiteboardPanel.Stroke.ShapeType.TRIANGLE) msg.setType("DRAW_TRI");
-                    
+
                     msg.setX1(stroke.getX1());
                     msg.setY1(stroke.getY1());
-                    msg.setX2(stroke.getX2()); // w is serialized to x2
-                    msg.setY2(stroke.getY2()); // h is serialized to y2
+                    msg.setX2(stroke.getX2());
+                    msg.setY2(stroke.getY2());
                 }
                 break;
 
@@ -215,9 +222,7 @@ public class DrawingAction {
         return gson.toJson(msg);
     }
 
-    /**
-     * Parses a JSON message into a DrawingAction.
-     */
+    // Parses a JSON wire message back into an action, or null if unknown.
     public static DrawingAction fromMessage(String jsonMessage, String clientId) {
         if (jsonMessage == null || jsonMessage.isEmpty()) {
             return null;
@@ -299,6 +304,7 @@ public class DrawingAction {
         }
     }
 
+    // Returns a short readable summary for logging.
     @Override
     public String toString() {
         return "DrawingAction[" + type + " by " + clientId + " at " + timestamp + "]";

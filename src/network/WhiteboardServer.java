@@ -1,3 +1,4 @@
+// Server entry point: accepts client sockets, relays messages, and manages the Python AI service.
 package network;
 
 import java.io.BufferedReader;
@@ -23,6 +24,7 @@ public class WhiteboardServer {
 
     private final Gson gson;
 
+    // Creates the server with its connection registry and database.
     public WhiteboardServer() {
         this.connectionManager = new ConnectionManager();
         this.clientCounter = 0;
@@ -30,11 +32,11 @@ public class WhiteboardServer {
         this.gson = new Gson();
     }
 
+    // Binds the listening socket and accepts clients until stopped.
     public void start() {
-        // Start the Python AI Microservice automatically
+
         startPythonService();
 
-        // Load and register persistent blocked slangs from SQLite database
         try {
             java.util.List<String> persistedSlangs = DatabaseManager.getAllBlockedSlangs();
             for (String slang : persistedSlangs) {
@@ -82,7 +84,6 @@ public class WhiteboardServer {
                     System.out.println("[Server] Total active clients: " + connectionManager.getActiveClientCount());
                     System.out.println();
 
-                    // Send USER_JOINED system message to others
                     NetworkMessage joinMsg = new NetworkMessage("USER_JOINED");
                     joinMsg.setSenderId(clientId);
                     broadcastMessage(gson.toJson(joinMsg), handler);
@@ -106,35 +107,38 @@ public class WhiteboardServer {
         }
     }
 
+    // Relays a message to every client except the sender.
     public void broadcastMessage(String jsonMessage, ClientHandler sender) {
         connectionManager.broadcastToOthers(jsonMessage, sender);
     }
 
+    // Relays a message to every connected client.
     public void broadcastToAll(String jsonMessage) {
         connectionManager.broadcastToAll(jsonMessage);
     }
 
+    // Drops a disconnected client from the registry.
     public void removeClient(ClientHandler handler) {
         connectionManager.removeClient(handler);
 
         System.out.println("[Server] Client removed: " + handler.getClientId());
         System.out.println("[Server] Remaining active clients: " + connectionManager.getActiveClientCount());
 
-        // Send USER_LEFT system message
         NetworkMessage leaveMsg = new NetworkMessage("USER_LEFT");
         leaveMsg.setSenderId(handler.getClientId());
         broadcastToAll(gson.toJson(leaveMsg));
     }
 
+    // Returns how many clients are currently connected.
     public int getActiveClientCount() {
         return connectionManager.getActiveClientCount();
     }
 
+    // Closes all clients, the listening socket, and the Python service.
     public void stop() {
         running = false;
         System.out.println("[Server] Shutting down server...");
 
-        // Send SERVER_SHUTDOWN system message
         NetworkMessage shutdownMsg = new NetworkMessage("SERVER_SHUTDOWN");
         shutdownMsg.setText("Server is shutting down");
         broadcastToAll(gson.toJson(shutdownMsg));
@@ -154,6 +158,7 @@ public class WhiteboardServer {
         System.out.println("[Server] Server stopped.");
     }
 
+    // Launches the Python AI service as a child process.
     private void startPythonService() {
         new Thread(() -> {
             try {
@@ -175,6 +180,7 @@ public class WhiteboardServer {
         }, "PythonAIServiceRunner").start();
     }
 
+    // Terminates the Python AI service child process.
     private void stopPythonService() {
         if (pythonProcess != null) {
             System.out.println("[Server] Terminating Python AI process...");
@@ -188,6 +194,7 @@ public class WhiteboardServer {
         }
     }
 
+    // Starts the server and registers a shutdown hook.
     public static void main(String[] args) {
         System.out.println("[Main] Starting Whiteboard Server...");
 

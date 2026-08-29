@@ -1,9 +1,13 @@
+// The drawing canvas: captures mouse input, paints strokes and text, and mirrors changes to the server.
 package network;
 
 import java.awt.*;
+import java.awt.event.KeyEvent;
 import java.awt.event.MouseAdapter;
 import java.awt.event.MouseEvent;
 import java.awt.event.MouseMotionAdapter;
+import java.awt.event.WindowAdapter;
+import java.awt.event.WindowEvent;
 import java.awt.image.BufferedImage;
 import java.io.File;
 import java.io.IOException;
@@ -14,17 +18,21 @@ import com.google.gson.Gson;
 
 public class WhiteboardPanel extends JPanel {
 
+    // One captured pen position in canvas coordinates.
     public static class DrawPoint {
         public final int x;
         public final int y;
 
+        // Holds one canvas coordinate pair.
         public DrawPoint(int x, int y) {
             this.x = x;
             this.y = y;
         }
     }
 
+    // One drawn item: a freehand path or a normalized shape.
     public static class Stroke {
+        // The forms a stroke can take once recognized.
         public enum ShapeType { FREEHAND, LINE, RECTANGLE, CIRCLE, TRIANGLE }
 
         private List<DrawPoint> points;
@@ -33,10 +41,12 @@ public class WhiteboardPanel extends JPanel {
         private ShapeType type = ShapeType.FREEHAND;
         private int x1, y1, x2, y2;
 
+        // Starts an empty freehand stroke.
         public Stroke(Color color, int strokeWidth) {
             this(color, strokeWidth, ShapeType.FREEHAND, 0, 0, 0, 0);
         }
 
+        // Creates a finished shape stroke from its bounding coordinates.
         public Stroke(Color color, int strokeWidth, ShapeType type, int x1, int y1, int x2, int y2) {
             this.points = new ArrayList<>();
             this.color = color;
@@ -48,32 +58,42 @@ public class WhiteboardPanel extends JPanel {
             this.y2 = y2;
         }
 
+        // Appends one pen position to a freehand stroke.
         public void addPoint(int x, int y) {
             points.add(new DrawPoint(x, y));
         }
 
+        // Returns the captured pen positions.
         public List<DrawPoint> getPoints() {
             return points;
         }
 
+        // Returns the stroke colour.
         public Color getColor() {
             return color;
         }
 
+        // Returns the pen width in pixels.
         public int getStrokeWidth() {
             return strokeWidth;
         }
 
+        // Returns whether this is freehand or a recognized shape.
         public ShapeType getType() {
             return type;
         }
 
+        // Returns the first x coordinate of a shape stroke.
         public int getX1() { return x1; }
+        // Returns the first y coordinate of a shape stroke.
         public int getY1() { return y1; }
+        // Returns the second x coordinate, or the shape width.
         public int getX2() { return x2; }
+        // Returns the second y coordinate, or the shape height.
         public int getY2() { return y2; }
     }
 
+    // One piece of text placed on the canvas.
     public static class TextElement {
         private final String text;
         private int x;
@@ -81,6 +101,7 @@ public class WhiteboardPanel extends JPanel {
         private final Color color;
         private final int fontSize;
 
+        // Holds one placed text item and its style.
         public TextElement(String text, int x, int y, Color color, int fontSize) {
             this.text = text;
             this.x = x;
@@ -89,15 +110,23 @@ public class WhiteboardPanel extends JPanel {
             this.fontSize = fontSize;
         }
 
+        // Returns the displayed text.
         public String getText() { return text; }
+        // Returns the text x position.
         public int getX() { return x; }
+        // Returns the text y position.
         public int getY() { return y; }
+        // Moves the text horizontally.
         public void setX(int x) { this.x = x; }
+        // Moves the text vertically.
         public void setY(int y) { this.y = y; }
+        // Returns the text colour.
         public Color getColor() { return color; }
+        // Returns the font size in points.
         public int getFontSize() { return fontSize; }
     }
 
+    // Whether clicks draw freehand or place text.
     public enum Mode { FREEHAND, TEXT }
 
     private final List<Stroke> strokes;
@@ -129,9 +158,10 @@ public class WhiteboardPanel extends JPanel {
     private final List<String> actionHistory = java.util.Collections.synchronizedList(new ArrayList<>());
     private final Gson gson = new Gson();
 
+    // Builds the canvas and wires up the mouse listeners.
     public WhiteboardPanel() {
         setBackground(Color.WHITE);
-        // Spacious scrollable canvas size (3000 x 2000)
+
         setPreferredSize(new Dimension(3000, 2000));
 
         strokes = java.util.Collections.synchronizedList(new ArrayList<>());
@@ -143,9 +173,10 @@ public class WhiteboardPanel extends JPanel {
         client = null;
 
         addMouseListener(new MouseAdapter() {
+            // Starts a stroke, places text, or picks up a text element.
             @Override
             public void mousePressed(MouseEvent e) {
-                // Map coordinates using zoomFactor
+
                 int mouseX = (int) (e.getX() / zoomFactor);
                 int mouseY = (int) (e.getY() / zoomFactor);
 
@@ -169,7 +200,8 @@ public class WhiteboardPanel extends JPanel {
 
                 if (drawingMode == Mode.TEXT) {
                     String text = showCustomInputDialog(WhiteboardPanel.this,
-                        "Text Tool", "Enter text to place on the whiteboard:");
+                        "Text Tool", "Enter text to place on the whiteboard:",
+                        e.getLocationOnScreen());
                     if (text != null && !text.trim().isEmpty()) {
                         String moderatedText = ContentModerator.moderateText(text);
 
@@ -211,6 +243,7 @@ public class WhiteboardPanel extends JPanel {
                 repaint();
             }
 
+            // Finishes the stroke, snapping it to a shape when snapping is on.
             @Override
             public void mouseReleased(MouseEvent e) {
                 if (selectedTextElement != null) {
@@ -236,7 +269,7 @@ public class WhiteboardPanel extends JPanel {
                             Stroke normLine = new Stroke(currentColor, currentStrokeWidth, Stroke.ShapeType.LINE, ns.x1, ns.y1, ns.x2, ns.y2);
                             strokes.add(normLine);
                             actionHistory.add("S");
-                            
+
                             NetworkMessage lineMsg = new NetworkMessage("DRAW_LINE");
                             lineMsg.setX1(ns.x1);
                             lineMsg.setY1(ns.y1);
@@ -323,6 +356,7 @@ public class WhiteboardPanel extends JPanel {
         });
 
         addMouseMotionListener(new MouseMotionAdapter() {
+            // Extends the current stroke or drags the selected text.
             @Override
             public void mouseDragged(MouseEvent e) {
                 int mouseX = (int) (e.getX() / zoomFactor);
@@ -377,6 +411,7 @@ public class WhiteboardPanel extends JPanel {
         System.out.println("[WhiteboardPanel] Panel initialized (3000x2000, white background).");
     }
 
+    // Paints the grid, every stroke, and every text element at the current zoom.
     @Override
     protected void paintComponent(Graphics g) {
         super.paintComponent(g);
@@ -386,7 +421,6 @@ public class WhiteboardPanel extends JPanel {
         g2d.setRenderingHint(RenderingHints.KEY_RENDERING, RenderingHints.VALUE_RENDER_QUALITY);
         g2d.setRenderingHint(RenderingHints.KEY_TEXT_ANTIALIASING, RenderingHints.VALUE_TEXT_ANTIALIAS_ON);
 
-        // Apply scale transformation for zooming
         g2d.scale(zoomFactor, zoomFactor);
 
         if (showGrid) {
@@ -462,6 +496,7 @@ public class WhiteboardPanel extends JPanel {
         }
     }
 
+    // Adds a stroke received from another client.
     public void addRemoteStroke(Stroke stroke) {
         if (stroke != null) {
             strokes.add(stroke);
@@ -469,6 +504,7 @@ public class WhiteboardPanel extends JPanel {
         }
     }
 
+    // Appends one remote line segment to the canvas.
     public void addRemoteLine(int x1, int y1, int x2, int y2, Color color, int lineWidth) {
         Stroke segment = new Stroke(color, lineWidth);
         segment.addPoint(x1, y1);
@@ -478,6 +514,7 @@ public class WhiteboardPanel extends JPanel {
         repaint();
     }
 
+    // Removes every stroke and text element.
     public void clearCanvas() {
         strokes.clear();
         textElements.clear();
@@ -486,6 +523,7 @@ public class WhiteboardPanel extends JPanel {
         System.out.println("[WhiteboardPanel] Canvas cleared.");
     }
 
+    // Adds a normalized shape received from another client.
     public void addRemoteShape(Stroke.ShapeType type, int x, int y, int w, int h, Color color, int strokeWidth) {
         Stroke shape = new Stroke(color, strokeWidth, type, x, y, w, h);
         strokes.add(shape);
@@ -493,6 +531,7 @@ public class WhiteboardPanel extends JPanel {
         repaint();
     }
 
+    // Adds a text element received from another client.
     public void addRemoteText(String text, int x, int y, Color color, int fontSize) {
         TextElement te = new TextElement(text, x, y, color, fontSize);
         textElements.add(te);
@@ -500,6 +539,7 @@ public class WhiteboardPanel extends JPanel {
         repaint();
     }
 
+    // Adds a text element here and broadcasts it to the others.
     public void addLocalTextElement(String text, int x, int y, Color color, int fontSize) {
         TextElement te = new TextElement(text, x, y, color, fontSize);
         textElements.add(te);
@@ -516,6 +556,7 @@ public class WhiteboardPanel extends JPanel {
         repaint();
     }
 
+    // Removes the most recent local stroke or text element.
     public void undoLastAction() {
         if (!actionHistory.isEmpty()) {
             String lastAction = actionHistory.remove(actionHistory.size() - 1);
@@ -529,6 +570,7 @@ public class WhiteboardPanel extends JPanel {
         }
     }
 
+    // Removes the most recent item after a remote undo.
     public void undoRemoteAction() {
         if (!actionHistory.isEmpty()) {
             String lastAction = actionHistory.remove(actionHistory.size() - 1);
@@ -541,6 +583,7 @@ public class WhiteboardPanel extends JPanel {
         }
     }
 
+    // Repositions a text element that another client dragged.
     public void moveRemoteText(int oldX, int oldY, int newX, int newY) {
         synchronized (textElements) {
             for (TextElement te : textElements) {
@@ -554,93 +597,117 @@ public class WhiteboardPanel extends JPanel {
         repaint();
     }
 
+    // Switches between freehand drawing and text placement.
     public void setDrawingMode(Mode mode) {
         if (mode != null) {
             this.drawingMode = mode;
         }
     }
 
+    // Returns the active input mode.
     public Mode getDrawingMode() {
         return drawingMode;
     }
 
+    // Turns shape snapping on or off.
     public void setAutoNormalize(boolean autoNormalize) {
         this.autoNormalize = autoNormalize;
     }
 
+    // Reports whether shape snapping is on.
     public boolean isAutoNormalize() {
         return autoNormalize;
     }
 
+    // Sets the font size used for new text.
     public void setCurrentFontSize(int fontSize) {
         if (fontSize >= 8 && fontSize <= 100) {
             this.currentFontSize = fontSize;
         }
     }
 
+    // Returns the font size used for new text.
     public int getCurrentFontSize() {
         return currentFontSize;
     }
 
+    // Shows or hides the dotted background grid.
     public void setShowGrid(boolean showGrid) {
         this.showGrid = showGrid;
         repaint();
     }
 
+    // Reports whether the grid is visible.
     public boolean isShowGrid() {
         return showGrid;
     }
 
+    // Sets the colour used for new strokes and text.
     public void setDrawingColor(Color color) {
         if (color != null) {
             this.currentColor = color;
         }
     }
 
+    // Returns the current drawing colour.
     public Color getDrawingColor() {
         return currentColor;
     }
 
+    // Sets the pen width used for new strokes.
     public void setStrokeWidth(int width) {
         if (width >= 1) {
             this.currentStrokeWidth = width;
         }
     }
 
+    // Returns the current pen width.
     public int getCurrentStrokeWidth() {
         return currentStrokeWidth;
     }
 
+    // Sets the zoom, clamped to a sane range and rounded to whole percents.
     public void setZoomFactor(double zoom) {
-        // Range clamp between 20% and 400%
-        this.zoomFactor = Math.max(0.2, Math.min(4.0, zoom));
+
+        this.zoomFactor = Math.round(Math.max(0.2, Math.min(4.0, zoom)) * 100) / 100.0;
         setPreferredSize(new Dimension((int) (3000 * zoomFactor), (int) (2000 * zoomFactor)));
         revalidate();
         repaint();
     }
 
+    // Returns the current zoom factor.
     public double getZoomFactor() {
         return zoomFactor;
     }
 
+    // Attaches the client used to broadcast local changes.
     public void setClient(WhiteboardClient client) {
         this.client = client;
     }
 
+    // Sends one message to the server when a client is attached.
     private void sendJsonMessage(NetworkMessage msg) {
         if (client != null) {
             client.sendMessage(gson.toJson(msg));
         }
     }
 
+    // Returns how many strokes are on the canvas.
     public int getStrokeCount() {
         return strokes.size();
     }
 
+    // Returns a read-only view of the strokes.
     public List<Stroke> getStrokes() {
         return java.util.Collections.unmodifiableList(strokes);
     }
 
+    // Returns a read-only view of the text elements.
+    public List<TextElement> getTextElements() {
+        return java.util.Collections.unmodifiableList(textElements);
+    }
+
+    // Encodes the whole canvas as JSON messages for saving.
     public List<String> serializeCanvasState() {
         List<String> list = new ArrayList<>();
         synchronized (strokes) {
@@ -678,7 +745,7 @@ public class WhiteboardPanel extends JPanel {
                     if (stroke.getType() == Stroke.ShapeType.RECTANGLE) typeStr = "DRAW_RECT";
                     else if (stroke.getType() == Stroke.ShapeType.CIRCLE) typeStr = "DRAW_CIRCLE";
                     else if (stroke.getType() == Stroke.ShapeType.TRIANGLE) typeStr = "DRAW_TRI";
-                    
+
                     NetworkMessage shape = new NetworkMessage(typeStr);
                     shape.setX1(stroke.getX1());
                     shape.setY1(stroke.getY1());
@@ -707,21 +774,19 @@ public class WhiteboardPanel extends JPanel {
         return list;
     }
 
+    // Renders the canvas contents to a PNG file.
     public void exportToPNG(File file) {
-        // Create an unscaled high-resolution image of the entire whiteboard space
+
         BufferedImage image = new BufferedImage(3000, 2000, BufferedImage.TYPE_INT_RGB);
         Graphics2D g2d = image.createGraphics();
 
-        // Render pure white background
         g2d.setColor(Color.WHITE);
         g2d.fillRect(0, 0, 3000, 2000);
 
-        // Rendering presets
         g2d.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
         g2d.setRenderingHint(RenderingHints.KEY_RENDERING, RenderingHints.VALUE_RENDER_QUALITY);
         g2d.setRenderingHint(RenderingHints.KEY_TEXT_ANTIALIASING, RenderingHints.VALUE_TEXT_ANTIALIAS_ON);
 
-        // Render strokes
         synchronized (strokes) {
             for (Stroke stroke : strokes) {
                 g2d.setColor(stroke.getColor());
@@ -760,7 +825,6 @@ public class WhiteboardPanel extends JPanel {
             }
         }
 
-        // Render text
         synchronized (textElements) {
             for (TextElement te : textElements) {
                 g2d.setColor(te.getColor());
@@ -771,7 +835,6 @@ public class WhiteboardPanel extends JPanel {
 
         g2d.dispose();
 
-        // Write image file
         try {
             javax.imageio.ImageIO.write(image, "PNG", file);
             System.out.println("[WhiteboardPanel] Exported whiteboard canvas to: " + file.getAbsolutePath());
@@ -780,8 +843,15 @@ public class WhiteboardPanel extends JPanel {
         }
     }
 
+    // Prompts for one line of text, centred on the window.
     public static String showCustomInputDialog(Component parent, String title, String prompt) {
-        JDialog dialog = new JDialog((Frame) SwingUtilities.getWindowAncestor(parent), title, true);
+        return showCustomInputDialog(parent, title, prompt, null);
+    }
+
+    // Prompts for one line of text, opening next to the given screen point.
+    public static String showCustomInputDialog(Component parent, String title, String prompt, Point anchorOnScreen) {
+        Window owner = parent == null ? null : SwingUtilities.getWindowAncestor(parent);
+        JDialog dialog = new JDialog(owner, title, Dialog.ModalityType.APPLICATION_MODAL);
         dialog.setUndecorated(true);
         dialog.getRootPane().setBorder(BorderFactory.createLineBorder(new Color(51, 65, 85), 2));
 
@@ -850,11 +920,41 @@ public class WhiteboardPanel extends JPanel {
         btnPanel.add(okBtn);
         panel.add(btnPanel, BorderLayout.SOUTH);
 
+        dialog.getRootPane().setDefaultButton(okBtn);
+        dialog.getRootPane().registerKeyboardAction(
+            e -> { result[0] = null; dialog.dispose(); },
+            KeyStroke.getKeyStroke(KeyEvent.VK_ESCAPE, 0),
+            JComponent.WHEN_IN_FOCUSED_WINDOW);
+
+        dialog.addWindowListener(new WindowAdapter() {
+            // Puts the caret in the text field as soon as the dialog appears.
+            @Override
+            public void windowOpened(WindowEvent e) {
+                textField.requestFocusInWindow();
+            }
+        });
+
         dialog.add(panel);
         dialog.pack();
-        dialog.setLocationRelativeTo(parent);
+        placeDialog(dialog, owner, anchorOnScreen);
         dialog.setVisible(true);
 
         return result[0];
+    }
+
+    // Positions the dialog at the anchor point, kept fully on screen.
+    private static void placeDialog(JDialog dialog, Window owner, Point anchorOnScreen) {
+        if (anchorOnScreen == null) {
+            dialog.setLocationRelativeTo(owner);
+            return;
+        }
+        Rectangle screen = owner != null
+                ? owner.getGraphicsConfiguration().getBounds()
+                : new Rectangle(Toolkit.getDefaultToolkit().getScreenSize());
+        int x = anchorOnScreen.x + 12;
+        int y = anchorOnScreen.y + 12;
+        x = Math.max(screen.x, Math.min(x, screen.x + screen.width - dialog.getWidth()));
+        y = Math.max(screen.y, Math.min(y, screen.y + screen.height - dialog.getHeight()));
+        dialog.setLocation(x, y);
     }
 }

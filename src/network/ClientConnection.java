@@ -1,3 +1,4 @@
+// Wraps one socket with buffered reader and writer helpers for line-based JSON messaging.
 package network;
 
 import java.io.*;
@@ -15,6 +16,7 @@ public class ClientConnection {
 
     private volatile boolean connected;
 
+    // Opens the reader and writer over the given socket.
     public ClientConnection(Socket socket, String clientId) throws IOException {
         this.socket = socket;
         this.clientId = clientId;
@@ -34,6 +36,7 @@ public class ClientConnection {
             + ":" + socket.getPort());
     }
 
+    // Writes one message line and flushes it.
     public synchronized void sendMessage(String message) {
         if (connected && outputWriter != null) {
 
@@ -46,6 +49,7 @@ public class ClientConnection {
         }
     }
 
+    // Blocks until one message line arrives, or returns null at end of stream.
     public String receiveMessage() throws IOException {
         if (connected && inputReader != null) {
 
@@ -60,6 +64,7 @@ public class ClientConnection {
         return null;
     }
 
+    // Closes the streams and the socket, ignoring shutdown errors.
     public synchronized void close() {
         if (!connected) {
             return;
@@ -93,18 +98,22 @@ public class ClientConnection {
         System.out.println("[ClientConnection] Connection closed for " + clientId);
     }
 
+    // Returns the id assigned to this connection.
     public String getClientId() {
         return clientId;
     }
 
+    // Returns the underlying socket.
     public Socket getSocket() {
         return socket;
     }
 
+    // Reports whether the socket is still open.
     public boolean isConnected() {
         return connected && socket != null && !socket.isClosed();
     }
 
+    // Returns the remote IP address as text.
     public String getClientAddress() {
         if (socket != null) {
             return socket.getInetAddress().getHostAddress();
@@ -112,6 +121,7 @@ public class ClientConnection {
         return "unknown";
     }
 
+    // Returns the remote port number.
     public int getClientPort() {
         if (socket != null) {
             return socket.getPort();
