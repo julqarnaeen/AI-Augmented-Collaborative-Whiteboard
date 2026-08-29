@@ -14,17 +14,17 @@ Open three terminal windows from the project root and run the following commands
 
 ### 1. Compile
 ```bash
-javac -d out src/network/*.java
+ javac -cp "lib/*" -d out src/network/*.java 
 ```
 
 ### 2. Start the Server
 ```bash
-java -cp out network.WhiteboardServer
+ java -cp "out;lib/*" network.WhiteboardServer
 ```
 
 ### 3. Start a Client (in a separate terminal)
 ```bash
-java -cp out network.WhiteboardClient
+ java -cp "out;lib/*" network.WhiteboardClient 
 ```
 
 > You can run command 3 in multiple terminals to connect additional clients.
@@ -44,6 +44,29 @@ java -cp out network.WhiteboardClient
 - **Clear All Canvas** — A single button clears the entire canvas for all connected users simultaneously.
 - **Toggle Grid Background** — A dotted grid overlay can be toggled on or off to assist with alignment and drawing precision.
 - **Status Bar** — A real-time status bar displays connection state, user join/leave notifications, and active tool information.
+
+
+## Project Architecture
+
+```
+
+                 SERVER
+                   |
+          WhiteboardServer
+                   |
+        ---------------------
+        |         |         |
+        ↓         ↓         ↓
+ ClientHandler ClientHandler ClientHandler
+        |         |         |
+        ↓         ↓         ↓
+     Client 1  Client 2  Client 3
+        |         |         |
+        ↓         ↓         ↓
+ Whiteboard  Whiteboard  Whiteboard
+   Panel       Panel       Panel
+```
+
 
 ## Advantages
 
